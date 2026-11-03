@@ -196,11 +196,13 @@ export function restart(s: HockeyState) {
 }
 
 // ---------------------------------------------------------------- IA (jugador 1, derecha)
+// Fácil = nueva (de verdad fácil). Difícil = la antigua "normal". Imposible = la antigua "difícil".
 export const AI_LEVELS = {
-  easy:   { speed: 10, err: 38, react: 0.55, attack: 0.55 },
-  normal: { speed: 15, err: 18, react: 0.8,  attack: 0.8 },
-  hard:   { speed: 21, err: 6,  react: 1,    attack: 1 },
+  easy:       { speed: 5,  err: 70, react: 0.3, attack: 0.18 },
+  hard:       { speed: 15, err: 18, react: 0.8, attack: 0.8 },
+  impossible: { speed: 21, err: 6,  react: 1,   attack: 1 },
 } as const;
+export type AiLevel = keyof typeof AI_LEVELS;
 
 let aiNoise = 0, aiNoiseT = 0;
 let aiAimY = HH / 2, aiAimT = 0;

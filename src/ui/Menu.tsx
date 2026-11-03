@@ -1,7 +1,9 @@
 import type { Settings } from '../core/storage.ts';
 import { sfx } from '../core/audio.ts';
+import { spritePath, DAY } from '../games/capy/sprites.ts';
+import type { SpriteName } from '../games/capy/sprites.ts';
 
-export type MenuTarget = 'pool' | 'hockey-setup' | 'skins' | 'lucky' | 'game2048';
+export type MenuTarget = 'pool' | 'hockey' | 'lucky' | 'game2048' | 'capy';
 interface Props { settings: Settings; onChange: (p: Partial<Settings>) => void; go: (n: MenuTarget) => void }
 
 function PoolArt() {
@@ -28,7 +30,6 @@ function HockeyArt() {
     </svg>
   );
 }
-
 function LuckyArt() {
   const cols = ['#ff0055', '#ffea00', '#00ffcc'];
   return (
@@ -56,46 +57,62 @@ function Art2048() {
     </svg>
   );
 }
+// Capy Run: mismos sprites retro del juego, dibujados como SVG
+function Sprite({ name, x, y, scale }: { name: SpriteName; x: number; y: number; scale: number }) {
+  return <path transform={`translate(${x} ${y}) scale(${scale})`} d={spritePath(name)} fill={DAY.ink} />;
+}
+function CapyArt() {
+  return (
+    <svg viewBox="0 0 120 80" className="art" aria-hidden shapeRendering="crispEdges">
+      <rect width="120" height="80" fill={DAY.bg} />
+      <rect x="70" y="14" width="22" height="3" fill={DAY.soft} /><rect x="14" y="22" width="18" height="3" fill={DAY.soft} />
+      <rect x="0" y="62" width="120" height="3" fill={DAY.ink} />
+      <Sprite name="capyA" x={10} y={39} scale={1.6} />
+      <Sprite name="bambooTall" x={66} y={36} scale={1.6} />
+      <Sprite name="crowUp" x={88} y={22} scale={1.6} />
+    </svg>
+  );
+}
+
+const GAMES: { id: MenuTarget; title: string; desc: string; color: string; art: JSX.Element; tags: string[] }[] = [
+  { id: 'pool', title: 'Neon 2048 Pool', desc: 'Parte la ficha gigante a golpes de bola.', color: 'c-cyan', art: <PoolArt />, tags: ['1 jugador', 'Skins'] },
+  { id: 'hockey', title: 'Air Hockey', desc: 'Contra la CPU o de a dos en la misma pantalla.', color: 'c-pink', art: <HockeyArt />, tags: ['1-2 jugadores', '3 dificultades', 'Skins'] },
+  { id: 'lucky', title: 'Suerte 2048', desc: 'Voltea 3 fichas "?" y suma. Gana el que más junte.', color: 'c-amber', art: <LuckyArt />, tags: ['Vs máquina', 'Multijugador'] },
+  { id: 'game2048', title: '2048', desc: 'El clásico: desliza y fusiona hasta llegar al 2048.', color: 'c-lime', art: <Art2048 />, tags: ['1 jugador', 'Récord'] },
+  { id: 'capy', title: 'Capy Run', desc: 'Un capibara corre, salta bambú y esquiva cuervos.', color: 'c-green', art: <CapyArt />, tags: ['1 jugador', 'Récord', 'Pixel art'] },
+];
 
 export default function Menu({ settings, onChange, go }: Props) {
   const nav = (n: MenuTarget) => { sfx.unlock(); sfx.click(); go(n); };
   return (
     <main className="menu scroll">
+      <button className="ibtn sound" onClick={() => { sfx.unlock(); onChange({ sound: !settings.sound }); }} aria-label={settings.sound ? 'Silenciar' : 'Activar sonido'} aria-pressed={settings.sound} title={settings.sound ? 'Sonido: sí' : 'Sonido: no'}>
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none" />
+          {settings.sound ? <><path d="M16 9a4 4 0 0 1 0 6" /><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11" /></> : <path d="M16 9l5 6M21 9l-5 6" />}
+        </svg>
+      </button>
       <header className="brand">
-        <h1 className="tube" aria-label="BrNeon Games">
-          <span className="br">Br</span><span className="neon">Neon</span>
+        <h1 className="tube" aria-label="brneon Arcade">
+          <span className="br">br</span><span className="neon">neon</span>
         </h1>
-        <p className="games">Games</p>
-        <p className="tag">Arcade para jugar solo o de a dos, en el celular o en el PC.</p>
+        <p className="games">Arcade</p>
+        <p className="tag">Juegos para el celular y el PC. Cada uno trae sus propios modos y botones.</p>
       </header>
-      <nav className="cabs">
-        <button className="cab c-cyan" onClick={() => nav('pool')}>
-          <PoolArt />
-          <span className="cab-t">Neon 2048 Pool</span>
-          <span className="cab-s">Parte la ficha gigante a golpes de bola. 1 jugador.</span>
-        </button>
-        <button className="cab c-amber" onClick={() => nav('lucky')}>
-          <LuckyArt />
-          <span className="cab-t">Suerte 2048</span>
-          <span className="cab-s">Voltea 3 fichas "?" y suma. Contra la máquina o varios jugadores.</span>
-        </button>
-        <button className="cab c-lime" onClick={() => nav('game2048')}>
-          <Art2048 />
-          <span className="cab-t">2048</span>
-          <span className="cab-s">El clásico: desliza y fusiona hasta llegar al 2048.</span>
-        </button>
-        <button className="cab c-pink" onClick={() => nav('hockey-setup')}>
-          <HockeyArt />
-          <span className="cab-t">Air Hockey</span>
-          <span className="cab-s">Contra la CPU o de a dos en la misma pantalla.</span>
-        </button>
-      </nav>
-      <div className="foot">
-        <button className="btn ghost" onClick={() => nav('skins')}>Skins</button>
-        <button className="btn ghost" onClick={() => { sfx.unlock(); onChange({ sound: !settings.sound }); }}>
-          Sonido: {settings.sound ? 'sí' : 'no'}
-        </button>
-      </div>
+      <section aria-label="Juegos">
+        <h2 className="sec">Juegos <span>{GAMES.length}</span></h2>
+        <nav className="cabs">
+          {GAMES.map((g) => (
+            <button key={g.id} className={'cab ' + g.color} onClick={() => nav(g.id)}>
+              {g.art}
+              <span className="cab-t">{g.title}</span>
+              <span className="cab-s">{g.desc}</span>
+              <span className="cab-tags">{g.tags.map((t) => <i key={t}>{t}</i>)}</span>
+            </button>
+          ))}
+        </nav>
+      </section>
+      <footer className="foot"><span>brneon Arcade</span></footer>
     </main>
   );
 }

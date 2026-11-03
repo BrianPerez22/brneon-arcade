@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { tileTheme } from '../../core/tiles.ts';
 import { sfx } from '../../core/audio.ts';
+import type { Link } from '../../net/link.ts';
 
 const COLORS = ['#19f4ff', '#ff2bd6', '#ffb800', '#b6ff2e', '#9b7bff', '#ff6a3d', '#f1edff', '#38ff9c', '#ff5d8f', '#7fd8ff'];
 const VALUES = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
@@ -39,7 +40,7 @@ function Stepper({ label, value, min, max, onChange }: { label: string; value: n
   );
 }
 
-function Result({ sum, trio, color, last, onNext }: { sum: number; trio: boolean; color: string; last: boolean; onNext: () => void }) {
+function Result({ sum, trio, color, last, onNext, canNext = true }: { sum: number; trio: boolean; color: string; last: boolean; onNext: () => void; canNext?: boolean }) {
   const shown = useCountUp(sum * (trio ? 2 : 1));
   return (
     <div className="lresult" style={{ borderColor: color }}>
@@ -47,7 +48,7 @@ function Result({ sum, trio, color, last, onNext }: { sum: number; trio: boolean
         <span>Suma {sum}{trio && <em> · ¡trío! x2</em>}</span>
         <b style={{ color }}>{shown}</b>
       </div>
-      <button className="btn cyan" onClick={onNext}>{last ? 'Ver resultado' : 'Siguiente turno'}</button>
+      {canNext ? <button className="btn cyan" onClick={onNext}>{last ? 'Ver resultado' : 'Siguiente turno'}</button> : <span className="waiting">Esperando a tu rival…</span>}
     </div>
   );
 }
@@ -61,8 +62,11 @@ function Confetti() {
   );
 }
 
-export default function LuckyGame({ onExit }: { onExit: () => void }) {
-  const [mode, setMode] = useState<'cpu' | 'multi'>('cpu');
+export default function LuckyGame({ onExit, online }: { onExit: () => void; online?: { link: Link } }) {
+  const link = online?.link;
+  const me: 0 | 1 = link && link.role === 'guest' ? 1 : 0;
+  const [lost, setLost] = useState(false);
+  const [mode, setMode] = useState<'cpu' | 'multi'>(link ? 'multi' : 'cpu');
   const [count, setCount] = useState(3);
   const [rounds, setRounds] = useState(1);
 
@@ -78,20 +82,26 @@ export default function LuckyGame({ onExit }: { onExit: () => void }) {
   const cfgRounds = useRef(1);
 
   const isCpu = mode === 'cpu' && cur === 1;
+  const isRemote = !!link && cur !== me;
+  const advanceRef = useRef<() => void>(() => {});
+  const startRef = useRef<() => void>(() => {});
+  const S = useRef({ cur: 0, round: 0, scores: [] as number[], names: [] as string[], rounds: 1 });
   const color = COLORS[cur % COLORS.length];
 
   const startGame = () => {
     sfx.unlock(); sfx.click();
-    const n = mode === 'cpu' ? 2 : count;
+    const n = link ? 2 : mode === 'cpu' ? 2 : count;
     setNames(mode === 'cpu' ? ['Jugador 1', 'Máquina'] : Array.from({ length: n }, (_, i) => `Jugador ${i + 1}`));
     setScores(Array(n).fill(0)); cfgRounds.current = rounds;
-    setRound(0); setCur(0); newDeal(); setPhase('turn');
+    setRound(0); setCur(0); const v = newDeal(); setPhase('turn');
+    if (link) link.send({ t: 'start', rounds, values: v });
   };
-  const newDeal = () => { setValues(deal()); setPicked([]); setDone(null); setDealKey((k) => k + 1); };
+  const newDeal = (vals?: number[]) => { const v = vals ?? deal(); setValues(v); setPicked([]); setDone(null); setDealKey((k) => k + 1); return v; };
 
   const pick = (i: number) => {
-    if (done || isCpu || picked.length >= PICKS || picked.includes(i)) return;
+    if (done || isCpu || isRemote || picked.length >= PICKS || picked.includes(i)) return;
     sfx.power(); setPicked((p) => [...p, i]);
+    link?.send({ t: 'pick', i });
   };
 
   // la máquina elige sola
@@ -122,12 +132,41 @@ export default function LuckyGame({ onExit }: { onExit: () => void }) {
   }, [phase, picked.length, done, picked, values, cur]);
 
   const lastTurn = round === cfgRounds.current - 1 && cur === names.length - 1;
+  const advance = () => {
+    const st = S.current;
+    const isLast = st.round === st.rounds - 1 && st.cur === st.names.length - 1;
+    if (isLast) { setPhase('final'); sfx.win(); link?.send({ t: 'final', scores: st.scores }); return; }
+    const nc = st.cur + 1 < st.names.length ? st.cur + 1 : 0;
+    const nr = nc === 0 ? st.round + 1 : st.round;
+    setCur(nc); setRound(nr);
+    const v = newDeal();
+    link?.send({ t: 'deal', values: v, cur: nc, round: nr, scores: st.scores });
+  };
+  advanceRef.current = advance;
+  startRef.current = startGame;
+  S.current = { cur, round, scores, names, rounds: cfgRounds.current };
   const next = () => {
     sfx.click();
-    if (lastTurn) { setPhase('final'); sfx.win(); return; }
-    if (cur + 1 < names.length) setCur(cur + 1); else { setRound(round + 1); setCur(0); }
-    newDeal();
+    if (link && me === 1) { link.send({ t: 'next' }); return; }   // el invitado le avisa al anfitrión
+    advance();
   };
+
+  // ---- red
+  useEffect(() => {
+    if (!link) return;
+    link.onMessage((m) => {
+      if (m.t === 'start' && me === 1) {
+        setNames(['Jugador 1', 'Jugador 2']); setScores([0, 0]); cfgRounds.current = Number(m.rounds) || 1;
+        setRound(0); setCur(0); newDeal(m.values as number[]); setPhase('turn'); sfx.click();
+      } else if (m.t === 'pick') { const i = Number(m.i); setPicked((p) => (p.includes(i) ? p : [...p, i])); sfx.power(); }
+      else if (m.t === 'next' && me === 0) advanceRef.current();
+      else if (m.t === 'rematch' && me === 0) startRef.current();
+      else if (m.t === 'deal' && me === 1) { setScores(m.scores as number[]); setCur(Number(m.cur)); setRound(Number(m.round)); newDeal(m.values as number[]); }
+      else if (m.t === 'final' && me === 1) { setScores(m.scores as number[]); setPhase('final'); sfx.win(); }
+    });
+    link.onClose(() => setLost(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const top = scores.length ? Math.max(...scores) : 0;
   const winners = names.filter((_, i) => scores[i] === top);
@@ -137,7 +176,7 @@ export default function LuckyGame({ onExit }: { onExit: () => void }) {
       <header className="gbar">
         <button className="ibtn" onClick={onExit} aria-label="Volver al menú">‹</button>
         <div className="stats"><b className="ltitle">Suerte 2048</b></div>
-        {phase !== 'setup' && <button className="ibtn" onClick={() => { sfx.click(); setPhase('setup'); }} aria-label="Ajustes">⚙</button>}
+        {phase !== 'setup' && !link && <button className="ibtn" onClick={() => { sfx.click(); setPhase('setup'); }} aria-label="Ajustes">⚙</button>}
       </header>
 
       {phase === 'setup' && (
@@ -148,14 +187,17 @@ export default function LuckyGame({ onExit }: { onExit: () => void }) {
           </section>
           <section className="panel">
             <h3>Modo</h3>
-            <div className="seg">
-              <button className={mode === 'cpu' ? 'on' : ''} onClick={() => setMode('cpu')}>Contra la máquina</button>
-              <button className={mode === 'multi' ? 'on' : ''} onClick={() => setMode('multi')}>Varios jugadores</button>
-            </div>
-            {mode === 'multi' && <Stepper label="Jugadores" value={count} min={2} max={10} onChange={setCount} />}
-            <Stepper label="Rondas" value={rounds} min={1} max={5} onChange={setRounds} />
+            {!link && (
+              <div className="seg">
+                <button className={mode === 'cpu' ? 'on' : ''} onClick={() => setMode('cpu')}>Contra la máquina</button>
+                <button className={mode === 'multi' ? 'on' : ''} onClick={() => setMode('multi')}>Varios jugadores</button>
+              </div>
+            )}
+            {!link && mode === 'multi' && <Stepper label="Jugadores" value={count} min={2} max={10} onChange={setCount} />}
+            {(!link || me === 0) && <Stepper label="Rondas" value={rounds} min={1} max={5} onChange={setRounds} />}
+            {link && me === 1 && <p className="waiting">Esperando a que el anfitrión elija las rondas y empiece<i>.</i><i>.</i><i>.</i></p>}
           </section>
-          <button className="btn cyan big" onClick={startGame}>Empezar</button>
+          {(!link || me === 0) && <button className="btn cyan big" onClick={startGame}>Empezar</button>}
         </main>
       )}
 
@@ -164,13 +206,13 @@ export default function LuckyGame({ onExit }: { onExit: () => void }) {
           <div className="chips">
             {names.map((n, i) => (
               <div key={i} className={'pchip' + (i === cur ? ' on' : '')} style={{ ['--pc' as string]: COLORS[i % COLORS.length] }}>
-                <span>{n}</span><b>{scores[i]}</b>
+                <span>{n}{link && i === me ? ' (tú)' : ''}</span><b>{scores[i]}</b>
               </div>
             ))}
           </div>
           <div className="lmain">
             <div className="lturn" style={{ color }} key={'t' + dealKey}>
-              {isCpu ? 'La máquina está eligiendo…' : `Turno de ${names[cur]}`}
+              {isCpu ? 'La máquina está eligiendo…' : link ? (cur === me ? 'Es tu turno' : 'Turno de tu rival') : `Turno de ${names[cur]}`}
               <small>Ronda {round + 1} de {cfgRounds.current} · fichas {picked.length}/{PICKS}</small>
             </div>
             <div className="lboard" key={dealKey}>
@@ -182,15 +224,15 @@ export default function LuckyGame({ onExit }: { onExit: () => void }) {
                 return (
                   <button key={i} className={'ltile' + (reveal ? ' flip' : '') + (reveal && !flipped ? ' dim' : '')}
                     style={{ ['--i' as string]: i, ['--rev' as string]: `${reveal && !flipped ? 0.04 * i : 0}s` }}
-                    onClick={() => pick(i)} disabled={flipped || !!done || isCpu} aria-label={flipped ? `Ficha ${v}` : 'Ficha oculta'}>
+                    onClick={() => pick(i)} disabled={flipped || !!done || isCpu || isRemote} aria-label={flipped ? `Ficha ${v}` : 'Ficha oculta'}>
                     <span className="face front">?</span>
                     <span className={'face back d' + String(v).length} style={{ background: th.bg, borderColor: th.border, color: th.text, boxShadow: flipped ? `0 0 18px ${th.bg}` : 'none' }}>{v}</span>
                   </button>
                 );
               })}
             </div>
-            {done ? <Result key={'r' + dealKey} sum={done.sum} trio={done.trio} color={color} last={lastTurn} onNext={next} />
-              : <p className="hint">{isCpu ? 'Mira cómo elige…' : 'Toca 3 fichas'}</p>}
+            {done ? <Result key={'r' + dealKey} sum={done.sum} trio={done.trio} color={color} last={lastTurn} onNext={next} canNext={!link || cur === me} />
+              : <p className="hint">{isCpu || isRemote ? 'Mira cómo elige…' : 'Toca 3 fichas'}</p>}
           </div>
         </div>
       )}
@@ -209,11 +251,18 @@ export default function LuckyGame({ onExit }: { onExit: () => void }) {
             ))}
           </ol>
           <div className="row">
-            <button className="btn cyan" onClick={startGame}>Jugar otra vez</button>
-            <button className="btn ghost" onClick={() => setPhase('setup')}>Cambiar ajustes</button>
+            <button className="btn cyan" onClick={link && me === 1 ? () => { sfx.click(); link.send({ t: 'rematch' }); } : startGame}>{link && me === 1 ? 'Pedir revancha' : 'Jugar otra vez'}</button>
+            {!link && <button className="btn ghost" onClick={() => setPhase('setup')}>Cambiar ajustes</button>}
           </div>
           <button className="btn ghost" onClick={onExit}>Menú</button>
         </main>
+      )}
+      {lost && (
+        <div className="ov">
+          <h2 className="ov-title pink">Tu rival se desconectó</h2>
+          <p className="ov-text">La conexión se cerró. Vuelve al menú y crea otra sala.</p>
+          <button className="btn cyan" onClick={onExit}>Menú</button>
+        </div>
       )}
     </div>
   );

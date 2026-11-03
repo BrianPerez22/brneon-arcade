@@ -1,0 +1,22 @@
+/* ===== Online: código de amistad ===== */
+input, textarea { -webkit-user-select: text; user-select: text; font-size: 18px; /* >=16px: iOS no hace zoom al enfocar */ }
+.online .gpick { display: grid; gap: 12px; }
+.online .gpick .cab { grid-template-columns: 1fr; }
+.online .gpick .cab-t, .online .gpick .cab-s { grid-column: 1; }
+.codebox { display: flex; gap: 8px; justify-content: center; }
+.codebox span { width: 52px; height: 66px; display: grid; place-items: center; font: 26px var(--px); color: var(--cyan); background: #0b0818; border: 2px solid var(--cyan); border-radius: 10px;
+  text-shadow: 0 0 12px var(--cyan); box-shadow: 0 0 16px -4px var(--cyan); animation: codePop .45s cubic-bezier(.3, 1.6, .5, 1) backwards; }
+@keyframes codePop { from { transform: scale(0) rotate(-12deg); opacity: 0 } to { transform: none; opacity: 1 } }
+.codein { width: 100%; text-align: center; letter-spacing: .4em; text-indent: .4em; font: 26px var(--px); color: var(--cyan); background: #0b0818; border: 2px solid var(--line); border-radius: 12px; padding: 16px 8px; text-transform: uppercase; outline: none; }
+.codein:focus { border-color: var(--cyan); box-shadow: 0 0 18px -4px var(--cyan); }
+.waiting { margin: 0; text-align: center; color: var(--amber); font-weight: 700; }
+.waiting i { font-style: normal; animation: blink 1.2s infinite; } .waiting i:nth-child(2) { animation-delay: .2s } .waiting i:nth-child(3) { animation-delay: .4s }
+@keyframes blink { 0%, 80%, 100% { opacity: .15 } 40% { opacity: 1 } }
+.err { margin: 0; color: #ff6b8f; text-align: center; font-weight: 700; line-height: 1.4; }
+.small { margin: 0; font-size: 13px; color: var(--mute); text-align: center; }
+.testmode { display: flex; gap: 10px; align-items: center; color: var(--mute); font-size: 13px; }
+.testmode input { width: 20px; height: 20px; accent-color: var(--cyan); flex: none; }
+.ov-text.waiting { color: var(--amber); }
+@media (max-width: 360px) { .codebox span { width: 44px; height: 58px; font-size: 22px; } }
+
+.c-violet { --c: #9b7bff; }

@@ -1,11 +1,12 @@
-# BrNeon Games
+# brneon Arcade
 
-Arcade 100 % front-end (React + Vite + TypeScript, sin servidor) con dos juegos:
+Arcade 100 % front-end (React + Vite + TypeScript, sin servidor) con cinco juegos. Cada juego trae sus propios botones dentro de su interfaz (modo de juego, dificultad, skins...):
 
-* **Neon 2048 Pool** – lanza la bola contra fichas numeradas que se parten en dos.
-* **Air Hockey** – contra la CPU (3 dificultades) o de a dos en la misma pantalla.
-
-Incluye skins desbloqueadas para la bolita, las paletas (por jugador) y el disco.
+* **Neon 2048 Pool** – lanza la bola contra fichas numeradas que se parten en dos. Skins de bolita dentro del juego.
+* **Air Hockey** – 1 o 2 jugadores, dificultad Fácil / Difícil / Imposible (calavera), skins de paleta y disco; todo en la pantalla previa y en la pausa.
+* **Suerte 2048** – voltea fichas y suma, contra la máquina o varios jugadores.
+* **2048** – el clásico.
+* **Capy Run** – estilo dinosaurio de Chrome: un capibara pixel-art salta bambú y se agacha ante los cuervos.
 
 ## Cómo correrlo
 
@@ -47,6 +48,9 @@ y la página es `position: fixed` sin scroll. Cada dedo se sigue con su propio `
 src/core/      audio, skins, almacenamiento, ajuste del canvas, bloqueo de zoom
 src/games/pool/    engine.ts (física, sin DOM) + PoolGame.tsx
 src/games/hockey/  engine.ts (física + IA)     + HockeyGame.tsx
-src/ui/        menú, skins, preparación del hockey
+src/games/capy/    sprites.ts (pixel art) + CapyGame.tsx
+src/ui/        menú, selector de skins (se usa dentro de cada juego), calavera SVG
 tools/         simulaciones de balance (Node 22+)
 ```
+
+**Capy Run:** Espacio / flecha arriba salta, flecha abajo se agacha, P pausa. En el celular toca la pantalla (o «Saltar») y mantén «Agacharse».

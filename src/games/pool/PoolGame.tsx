@@ -7,6 +7,7 @@ import { drawBall, BALL_SKINS, findSkin } from '../../core/skins.ts';
 import { sfx } from '../../core/audio.ts';
 import { load, save } from '../../core/storage.ts';
 import type { Settings } from '../../core/storage.ts';
+import SkinPicker from '../../ui/SkinPicker.tsx';
 
 const TILE_COLORS: Record<number, { bg: string; border: string; text: string }> = {
   2048: { bg: '#ff0055', border: '#ff66aa', text: '#ffffff' },
@@ -31,7 +32,7 @@ const FONT = `'Press Start 2P', ui-monospace, monospace`;
 
 interface Particle { x: number; y: number; vx: number; vy: number; color: string; size: number; life: number; max: number }
 interface FText { x: number; y: number; text: string; color: string; life: number }
-type Overlay = 'intro' | 'play' | 'win' | 'lose';
+type Overlay = 'intro' | 'skins' | 'play' | 'win' | 'lose';
 
 function aimPath(s: PoolState, ang: number, bounces: number) {
   const r = s.cue.r;
@@ -56,7 +57,7 @@ function aimPath(s: PoolState, ang: number, bounces: number) {
   return { pts, hit };
 }
 
-export default function PoolGame({ settings, onExit }: { settings: Settings; onExit: () => void }) {
+export default function PoolGame({ settings, onChange, onExit }: { settings: Settings; onChange: (p: Partial<Settings>) => void; onExit: () => void }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<View | null>(null);
@@ -78,6 +79,8 @@ export default function PoolGame({ settings, onExit }: { settings: Settings; onE
   const hiRef = useRef(hi);
 
   const setOverlay = useCallback((o: Overlay) => { overlayRef.current = o; setOverlayState(o); }, []);
+  const skinsBack = useRef<Overlay>('intro');
+  const openSkins = () => { sfx.unlock(); sfx.click(); if (overlayRef.current !== 'skins') skinsBack.current = overlayRef.current; setOverlay('skins'); };
 
   const startLevel = useCallback((lvl: number, keepScore: boolean) => {
     const s = createPool(lvl, false);
@@ -298,6 +301,7 @@ export default function PoolGame({ settings, onExit }: { settings: Settings; onE
           {hud.laser > 0 && <div className="chip amber">Láser {hud.laser}</div>}
           {hud.sup && <div className="chip pink">Split x4</div>}
         </div>
+        <button className="tbtn" onClick={openSkins} aria-label="Skins">Skins</button>
         <button className="ibtn" onClick={() => { sfx.click(); startLevel(hud.level, false); }} aria-label="Reiniciar">↻</button>
       </header>
       <div className="stage" ref={boxRef}>
@@ -318,9 +322,13 @@ export default function PoolGame({ settings, onExit }: { settings: Settings; onE
               <div><span>Nivel {selLevel}</span><small>Ficha mayor {Math.max(...cfg.tiles)} · {cfg.shots} tiros</small></div>
               <button className="ibtn" disabled={selLevel >= maxLevel} onClick={() => setSelLevel(selLevel + 1)}>›</button>
             </div>
-            <button className="btn cyan" onClick={() => { sfx.click(); startLevel(selLevel, false); }}>Jugar</button>
+            <div className="sheet-actions">
+              <button className="btn ghost" onClick={openSkins}>Skins</button>
+              <button className="btn cyan" onClick={() => { sfx.click(); startLevel(selLevel, false); }}>Jugar</button>
+            </div>
           </div>
         )}
+        {overlay === 'skins' && <SkinPicker kinds={['ball']} settings={settings} onChange={onChange} onClose={() => setOverlay(skinsBack.current)} />}
         {overlay === 'win' && (
           <div className="ov">
             <h2 className="ov-title amber">¡Nivel {hud.level} completado!</h2>

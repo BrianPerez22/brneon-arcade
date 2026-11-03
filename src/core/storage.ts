@@ -16,11 +16,16 @@ export interface Settings {
   mallet1: string;   // skin paleta jugador 1
   mallet2: string;   // skin paleta jugador 2
   puck: string;      // skin del disco
-  aiLevel: 'easy' | 'normal' | 'hard';
+  aiLevel: 'easy' | 'hard' | 'impossible';
   goalsToWin: number;
 }
 export const defaultSettings: Settings = {
-  sound: true, ball: 'cian', mallet1: 'cian', mallet2: 'magenta', puck: 'clasico', aiLevel: 'normal', goalsToWin: 7,
+  sound: true, ball: 'cian', mallet1: 'cian', mallet2: 'magenta', puck: 'clasico', aiLevel: 'easy', goalsToWin: 7,
 };
-export const loadSettings = (): Settings => ({ ...defaultSettings, ...load<Partial<Settings>>('settings', {}) });
+export const loadSettings = (): Settings => {
+  const s = { ...defaultSettings, ...load<Partial<Settings>>('settings', {}) };
+  // las dificultades antiguas ('normal' ...) ya no existen: se vuelve a la nueva Fácil
+  if (!['easy', 'hard', 'impossible'].includes(s.aiLevel)) s.aiLevel = 'easy';
+  return s;
+};
 export const saveSettings = (s: Settings) => save('settings', s);

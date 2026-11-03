@@ -77,4 +77,16 @@
 }
 @media (prefers-reduced-motion: reduce) { .ltile, .tile, .confetti span, .face.front { animation: none !important; } .tpos { transition: none; } }
 
-.c-amber { --c: var(--amber); } .c-lime { --c: #b6ff2e; }
+.c-amber { --c: var(--amber); } .c-lime { --c: #b6ff2e; } .c-green { --c: #3ddc84; }
+
+/* ---------- Capy Run ---------- */
+.capy .stage { background: #05030f; }
+.capy .cv.pix { image-rendering: pixelated; cursor: pointer; border-radius: 0; box-shadow: 0 0 0 2px #3a2d7a, 0 0 30px -8px #3ddc84aa; }
+.capy-ctl { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px 12px calc(var(--sab) + 6px); border-top: 2px solid var(--line); }
+.capy-ctl .btn { min-height: 58px; touch-action: none; }
+.capy .stat.blink b { color: var(--amber); animation: blinkS .25s steps(2, end) 6; }
+@keyframes blinkS { 50% { opacity: .2 } }
+.newbest { color: var(--amber); }
+.ov-text b { color: var(--text); }
+@media (max-height: 480px) { .capy-ctl { padding: 4px 10px; } .capy-ctl .btn { min-height: 42px; } }
+@media (hover: hover) and (pointer: fine) and (min-width: 900px) { .capy-ctl { display: none; } }

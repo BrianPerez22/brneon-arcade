@@ -42,6 +42,11 @@ class Sfx {
   goal() { [392, 523.25, 659.25, 784, 1046.5].forEach((f, i) => this.tone(f, 0.16, 'square', 0.16, undefined, i * 0.07)); }
   beep(high = false) { this.tone(high ? 880 : 520, 0.12, 'square', 0.14); }
   click() { this.tone(700, 0.04, 'square', 0.07); }
+  // capy run
+  jump() { this.tone(260, 0.16, 'square', 0.13, 640); }
+  land() { this.tone(110, 0.05, 'triangle', 0.08, 70); }
+  caw() { this.tone(520, 0.09, 'sawtooth', 0.05, 300); this.tone(470, 0.1, 'sawtooth', 0.05, 260, 0.11); }
+  hit() { this.tone(220, 0.3, 'sawtooth', 0.22, 40); this.tone(110, 0.25, 'square', 0.14, 50, 0.05); }
 }
 export const sfx = new Sfx();
 

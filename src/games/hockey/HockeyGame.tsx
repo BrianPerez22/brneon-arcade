@@ -5,36 +5,54 @@ import { applyView, fitCanvas, toLogical } from '../../core/view.ts';
 import type { View } from '../../core/view.ts';
 import { drawMallet, drawPuck, MALLET_SKINS, PUCK_SKINS, findSkin } from '../../core/skins.ts';
 import { sfx } from '../../core/audio.ts';
+import { load, save } from '../../core/storage.ts';
 import type { Settings } from '../../core/storage.ts';
+import SkinPicker from '../../ui/SkinPicker.tsx';
+import Skull from '../../ui/Skull.tsx';
 
-export interface HockeyConfig { players: 1 | 2 }
-type Overlay = 'ready' | 'play' | 'pause' | 'over';
+type Overlay = 'setup' | 'skins' | 'play' | 'pause' | 'over';
+const LEVELS: { id: Settings['aiLevel']; label: string; hint: string }[] = [
+  { id: 'easy', label: 'Fácil', hint: 'La CPU es lenta y casi no ataca.' },
+  { id: 'hard', label: 'Difícil', hint: 'Defiende bien y ataca con ganas.' },
+  { id: 'impossible', label: 'Imposible', hint: 'Rápida, precisa y sin piedad. Suerte.' },
+];
 interface Particle { x: number; y: number; vx: number; vy: number; color: string; size: number; life: number; max: number }
 
 const C0 = '#19f4ff', C1 = '#ff2bd6';
 const FONT = `'Press Start 2P', ui-monospace, monospace`;
 
-export default function HockeyGame({ settings, config, onExit }: { settings: Settings; config: HockeyConfig; onExit: () => void }) {
+export default function HockeyGame({ settings, onChange, onExit }: { settings: Settings; onChange: (p: Partial<Settings>) => void; onExit: () => void }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<View | null>(null);
   const stateRef = useRef<HockeyState>(createHockey(settings.goalsToWin));
-  const overlayRef = useRef<Overlay>('ready');
+  const overlayRef = useRef<Overlay>('setup');
+  const skinsBack = useRef<Overlay>('setup');
   const settingsRef = useRef(settings); settingsRef.current = settings;
   const particles = useRef<Particle[]>([]);
   const flash = useRef<{ color: string; a: number }>({ color: C0, a: 0 });
   const banner = useRef<{ text: string; life: number }>({ text: '', life: 0 });
   const keys = useRef(new Set<string>());
   const pointers = useRef(new Map<number, 0 | 1>());
-  const [overlay, setOverlayState] = useState<Overlay>('ready');
+  const [overlay, setOverlayState] = useState<Overlay>('setup');
+  const [players, setPlayers] = useState<1 | 2>(() => (load<number>('hockeyPlayers', 1) === 2 ? 2 : 1));
   const [score, setScore] = useState<[number, number]>([0, 0]);
   const [winner, setWinner] = useState<0 | 1 | null>(null);
-  const one = config.players === 1;
+  const one = players === 1;
 
   const setOverlay = (o: Overlay) => { overlayRef.current = o; setOverlayState(o); };
-  const begin = () => { sfx.unlock(); sfx.click(); restart(stateRef.current); setScore([0, 0]); setWinner(null); setOverlay('play'); };
+  const begin = () => { sfx.unlock(); sfx.click(); stateRef.current.goalsToWin = settingsRef.current.goalsToWin; restart(stateRef.current); setScore([0, 0]); setWinner(null); setOverlay('play'); };
   const resume = () => { sfx.unlock(); setOverlay('play'); };
   const pause = () => { if (overlayRef.current === 'play') setOverlay('pause'); };
+  const choosePlayers = (n: 1 | 2) => { sfx.unlock(); sfx.click(); setPlayers(n); save('hockeyPlayers', n); };
+  const openSkins = () => {
+    sfx.unlock(); sfx.click();
+    const cur = overlayRef.current;
+    skinsBack.current = cur === 'setup' ? 'setup' : 'pause';
+    setOverlay('skins');
+  };
+  const closeSkins = () => setOverlay(skinsBack.current);
+  const toSetup = () => { sfx.click(); setOverlay('setup'); };
 
   const burst = (x: number, y: number, color: string, n: number, speed = 6) => {
     for (let i = 0; i < n; i++) {
@@ -232,44 +250,81 @@ export default function HockeyGame({ settings, config, onExit }: { settings: Set
     }
   };
 
+  const names: [string, string] = one ? ['Tú (izquierda)', 'CPU (derecha)'] : ['Jugador 1 (izquierda)', 'Jugador 2 (derecha)'];
+  const level = LEVELS.find((l) => l.id === settings.aiLevel) ?? LEVELS[0];
+
   return (
     <div className="game">
       <header className="gbar">
         <button className="ibtn" onClick={onExit} aria-label="Volver al menú">‹</button>
         <div className="stats hockey-score">
           <b className="c0">{one ? 'Tú' : 'J1'} {score[0]}</b>
-          <span className="to">a {stateRef.current.goalsToWin}</span>
-          <b className="c1">{score[1]} {one ? 'CPU' : 'J2'}</b>
+          <span className="to">a {settings.goalsToWin}</span>
+          <b className="c1">{score[1]} {one ? (settings.aiLevel === 'impossible' ? <Skull size={14} /> : 'CPU') : 'J2'}</b>
         </div>
+        <button className="tbtn" onClick={openSkins} aria-label="Skins">Skins</button>
         <button className="ibtn" onClick={() => (overlay === 'play' ? pause() : null)} aria-label="Pausa">❚❚</button>
       </header>
       <div className="stage" ref={boxRef}>
         <canvas ref={canvasRef} className="cv" />
-        {overlay === 'ready' && (
-          <div className="ov">
-            <h2 className="ov-title cyan">Air Hockey</h2>
-            <p className="ov-text">{one ? 'Tú contra la CPU' : 'Dos jugadores en el mismo equipo'} · primero a {stateRef.current.goalsToWin} goles.</p>
-            <ul className="legend how">
-              {one ? (
-                <>
-                  <li><i>☝</i> Celular: arrastra el dedo</li>
-                  <li><i>⌨</i> PC: mouse, WASD o flechas</li>
-                </>
-              ) : (
-                <>
-                  <li><i>☝☝</i> Celular: cada jugador arrastra en su mitad (puedes usar los dos dedos a la vez)</li>
-                  <li><i>⌨</i> PC: J1 = W A S D · J2 = flechas</li>
-                </>
+        {overlay === 'setup' && (
+          <div className="ov sheet">
+            <div className="sheet-in">
+              <h2 className="ov-title cyan">Air Hockey</h2>
+              <section className="opt">
+                <h3>Modo de juego</h3>
+                <div className="seg two">
+                  <button className={one ? 'on' : ''} onClick={() => choosePlayers(1)}>1 jugador<small>contra la CPU</small></button>
+                  <button className={!one ? 'on pink' : ''} onClick={() => choosePlayers(2)}>2 jugadores<small>misma pantalla</small></button>
+                </div>
+              </section>
+              {one && (
+                <section className="opt">
+                  <h3>Dificultad de la CPU</h3>
+                  <div className="seg">
+                    {LEVELS.map((l) => (
+                      <button key={l.id} className={(settings.aiLevel === l.id ? 'on ' : '') + (l.id === 'impossible' ? 'skullbtn' : '')} onClick={() => { sfx.click(); onChange({ aiLevel: l.id }); }}>
+                        {l.id === 'impossible' && <Skull size={16} />}{l.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="opt-hint">{level.hint}</p>
+                </section>
               )}
-            </ul>
-            <button className="btn cyan" onClick={begin}>¡Jugar!</button>
+              <section className="opt">
+                <h3>Goles para ganar</h3>
+                <div className="seg">
+                  {[3, 5, 7, 10].map((n) => <button key={n} className={settings.goalsToWin === n ? 'on' : ''} onClick={() => { sfx.click(); onChange({ goalsToWin: n }); }}>{n}</button>)}
+                </div>
+              </section>
+              <ul className="legend how">
+                {one ? (
+                  <>
+                    <li><i>☝</i> Celular: arrastra el dedo</li>
+                    <li><i>⌨</i> PC: mouse, WASD o flechas</li>
+                  </>
+                ) : (
+                  <>
+                    <li><i>☝☝</i> Celular: cada uno arrastra en su mitad, a la vez</li>
+                    <li><i>⌨</i> PC: J1 = W A S D · J2 = flechas</li>
+                  </>
+                )}
+              </ul>
+              <div className="sheet-actions">
+                <button className="btn ghost" onClick={openSkins}>Skins</button>
+                <button className="btn cyan" onClick={begin}>¡Jugar!</button>
+              </div>
+            </div>
           </div>
         )}
+        {overlay === 'skins' && <SkinPicker kinds={['mallet', 'puck']} settings={settings} onChange={onChange} onClose={closeSkins} players={names} />}
         {overlay === 'pause' && (
           <div className="ov">
             <h2 className="ov-title amber">Pausa</h2>
             <button className="btn cyan" onClick={resume}>Continuar</button>
             <button className="btn ghost" onClick={begin}>Reiniciar partido</button>
+            <button className="btn ghost" onClick={openSkins}>Skins</button>
+            <button className="btn ghost" onClick={toSetup}>Cambiar modo / dificultad</button>
             <button className="btn ghost" onClick={onExit}>Menú</button>
           </div>
         )}
@@ -280,6 +335,7 @@ export default function HockeyGame({ settings, config, onExit }: { settings: Set
             </h2>
             <p className="ov-text">{score[0]} – {score[1]}</p>
             <button className="btn cyan" onClick={begin}>Revancha</button>
+            <button className="btn ghost" onClick={toSetup}>Cambiar modo / dificultad</button>
             <button className="btn ghost" onClick={onExit}>Menú</button>
           </div>
         )}
