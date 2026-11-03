@@ -4,6 +4,7 @@ import App from './App.tsx';
 import { installNoZoom } from './core/noZoom.ts';
 import { installAudioUnlock } from './core/audio.ts';
 import './styles.css';
+import './games.css';
 
 installNoZoom();
 installAudioUnlock();

@@ -1,7 +1,8 @@
 import type { Settings } from '../core/storage.ts';
 import { sfx } from '../core/audio.ts';
 
-interface Props { settings: Settings; onChange: (p: Partial<Settings>) => void; go: (n: 'pool' | 'hockey-setup' | 'skins') => void }
+export type MenuTarget = 'pool' | 'hockey-setup' | 'skins' | 'lucky' | 'game2048';
+interface Props { settings: Settings; onChange: (p: Partial<Settings>) => void; go: (n: MenuTarget) => void }
 
 function PoolArt() {
   return (
@@ -28,8 +29,36 @@ function HockeyArt() {
   );
 }
 
+function LuckyArt() {
+  const cols = ['#ff0055', '#ffea00', '#00ffcc'];
+  return (
+    <svg viewBox="0 0 120 80" className="art" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <g key={i}>
+          <rect x={10 + i * 36} y="14" width="30" height="30" rx="5" fill={i === 1 ? cols[1] : '#1d1545'} stroke={i === 1 ? '#fff580' : '#3a2d7a'} strokeWidth="2.5" />
+          <text x={25 + i * 36} y="36" textAnchor="middle" fontFamily="'Press Start 2P',monospace" fontSize="14" fill={i === 1 ? '#302800' : '#19f4ff'}>{i === 1 ? '64' : '?'}</text>
+        </g>
+      ))}
+      <text x="60" y="68" textAnchor="middle" fontFamily="'Press Start 2P',monospace" fontSize="9" fill="#ffb800">3 = ?</text>
+    </svg>
+  );
+}
+function Art2048() {
+  const cells: [number, number, string, string][] = [[0, 0, '2', '#00ffcc'], [1, 0, '4', '#ff00aa'], [0, 1, '8', '#ff3300'], [2, 1, '128', '#00ff66'], [3, 2, '2048', '#ff0055'], [1, 3, '16', '#ff8800']];
+  return (
+    <svg viewBox="0 0 120 80" className="art" aria-hidden>
+      {cells.map(([c, r, v, col], i) => (
+        <g key={i}>
+          <rect x={10 + c * 25} y={r * 19 + 2} width="22" height="17" rx="3" fill={col} />
+          <text x={21 + c * 25} y={r * 19 + 14} textAnchor="middle" fontFamily="'Press Start 2P',monospace" fontSize={v.length > 3 ? 5 : 7} fill="#fff">{v}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 export default function Menu({ settings, onChange, go }: Props) {
-  const nav = (n: 'pool' | 'hockey-setup' | 'skins') => { sfx.unlock(); sfx.click(); go(n); };
+  const nav = (n: MenuTarget) => { sfx.unlock(); sfx.click(); go(n); };
   return (
     <main className="menu scroll">
       <header className="brand">
@@ -44,6 +73,16 @@ export default function Menu({ settings, onChange, go }: Props) {
           <PoolArt />
           <span className="cab-t">Neon 2048 Pool</span>
           <span className="cab-s">Parte la ficha gigante a golpes de bola. 1 jugador.</span>
+        </button>
+        <button className="cab c-amber" onClick={() => nav('lucky')}>
+          <LuckyArt />
+          <span className="cab-t">Suerte 2048</span>
+          <span className="cab-s">Voltea 3 fichas "?" y suma. Contra la máquina o varios jugadores.</span>
+        </button>
+        <button className="cab c-lime" onClick={() => nav('game2048')}>
+          <Art2048 />
+          <span className="cab-t">2048</span>
+          <span className="cab-s">El clásico: desliza y fusiona hasta llegar al 2048.</span>
         </button>
         <button className="cab c-pink" onClick={() => nav('hockey-setup')}>
           <HockeyArt />

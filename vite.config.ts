@@ -1,4 +1,3 @@
-
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -8,9 +7,10 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: false,
-    allowedHosts: [
-      'border-governance-medicaid-century.trycloudflare.com',
-    ],
+    allowedHosts: ['.trycloudflare.com'],
   },
-  preview: { host: true, port: 4173 },
+  preview: {
+    host: true,
+    port: 4173,
+  },
 });
