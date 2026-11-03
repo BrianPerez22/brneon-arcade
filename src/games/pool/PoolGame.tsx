@@ -262,7 +262,11 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
       const s = stateRef.current;
       if (overlayRef.current !== 'play' || s.moving || s.status !== 'PLAYING' || drag.current) return;
       const p = pos(e);
-      drag.current = { id: e.pointerId, sx: p.x, sy: p.y, cx: p.x, cy: p.y };
+      // Si se toca cerca de la bola blanca, anclar directamente a la bola
+      const nearCue = Math.hypot(p.x - s.cue.x, p.y - s.cue.y) < s.cue.r + 32;
+      const sx = nearCue ? s.cue.x : p.x;
+      const sy = nearCue ? s.cue.y : p.y;
+      drag.current = { id: e.pointerId, sx, sy, cx: p.x, cy: p.y };
       try { canvas.setPointerCapture(e.pointerId); } catch { /* ok */ }
     };
     const move = (e: PointerEvent) => {
@@ -279,12 +283,14 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
       if (e.type === 'pointerup' && dist > 14 && overlayRef.current === 'play') shoot(s, Math.atan2(dy, dx), Math.min(1, dist / MAX_PULL));
     };
     canvas.addEventListener('pointerdown', down);
-    canvas.addEventListener('pointermove', move);
-    canvas.addEventListener('pointerup', up);
-    canvas.addEventListener('pointercancel', up);
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', up, { passive: false });
+    window.addEventListener('pointercancel', up, { passive: false });
     return () => {
-      canvas.removeEventListener('pointerdown', down); canvas.removeEventListener('pointermove', move);
-      canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', up);
+      canvas.removeEventListener('pointerdown', down);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
     };
   }, []);
 
@@ -301,7 +307,7 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
           {hud.laser > 0 && <div className="chip amber">Láser {hud.laser}</div>}
           {hud.sup && <div className="chip pink">Split x4</div>}
         </div>
-        <button className="tbtn" onClick={openSkins} aria-label="Skins">Skins</button>
+        <button className="ibtn" onClick={openSkins} aria-label="Skins" title="Skins">🎨</button>
         <button className="ibtn" onClick={() => { sfx.click(); startLevel(hud.level, false); }} aria-label="Reiniciar">↻</button>
       </header>
       <div className="stage" ref={boxRef}>

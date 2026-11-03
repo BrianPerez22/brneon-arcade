@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { tileTheme } from '../../core/tiles.ts';
 import { sfx } from '../../core/audio.ts';
 import type { Link } from '../../net/link.ts';
+import type { Settings } from '../../core/storage.ts';
+import SkinPicker from '../../ui/SkinPicker.tsx';
 
 const COLORS = ['#19f4ff', '#ff2bd6', '#ffb800', '#b6ff2e', '#9b7bff', '#ff6a3d', '#f1edff', '#38ff9c', '#ff5d8f', '#7fd8ff'];
 const VALUES = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
@@ -62,10 +64,19 @@ function Confetti() {
   );
 }
 
-export default function LuckyGame({ onExit, online }: { onExit: () => void; online?: { link: Link } }) {
+interface Props {
+  onExit: () => void;
+  online?: { link: Link };
+  onOnline?: () => void;
+  settings?: Settings;
+  onChange?: (p: Partial<Settings>) => void;
+}
+
+export default function LuckyGame({ onExit, online, onOnline, settings, onChange }: Props) {
   const link = online?.link;
   const me: 0 | 1 = link && link.role === 'guest' ? 1 : 0;
   const [lost, setLost] = useState(false);
+  const [showSkins, setShowSkins] = useState(false);
   const [mode, setMode] = useState<'cpu' | 'multi'>(link ? 'multi' : 'cpu');
   const [count, setCount] = useState(3);
   const [rounds, setRounds] = useState(1);
@@ -176,6 +187,7 @@ export default function LuckyGame({ onExit, online }: { onExit: () => void; onli
       <header className="gbar">
         <button className="ibtn" onClick={onExit} aria-label="Volver al menú">‹</button>
         <div className="stats"><b className="ltitle">Suerte 2048</b></div>
+        {settings && onChange && <button className="ibtn" onClick={() => setShowSkins(true)} aria-label="Skins">🎨</button>}
         {phase !== 'setup' && !link && <button className="ibtn" onClick={() => { sfx.click(); setPhase('setup'); }} aria-label="Ajustes">⚙</button>}
       </header>
 
@@ -198,6 +210,7 @@ export default function LuckyGame({ onExit, online }: { onExit: () => void; onli
             {link && me === 1 && <p className="waiting">Esperando a que el anfitrión elija las rondas y empiece<i>.</i><i>.</i><i>.</i></p>}
           </section>
           {(!link || me === 0) && <button className="btn cyan big" onClick={startGame}>Empezar</button>}
+          {!link && onOnline && <button className="btn amber big" onClick={() => { sfx.unlock(); sfx.click(); onOnline(); }}>Online con un amigo<small>crea una sala o entra con un código</small></button>}
         </main>
       )}
 
@@ -263,6 +276,9 @@ export default function LuckyGame({ onExit, online }: { onExit: () => void; onli
           <p className="ov-text">La conexión se cerró. Vuelve al menú y crea otra sala.</p>
           <button className="btn cyan" onClick={onExit}>Menú</button>
         </div>
+      )}
+      {showSkins && settings && onChange && (
+        <SkinPicker settings={settings} onChange={onChange} kinds={['ball', 'capy']} onClose={() => setShowSkins(false)} />
       )}
     </div>
   );

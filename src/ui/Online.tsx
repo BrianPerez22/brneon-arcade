@@ -4,8 +4,8 @@ import { CODE_LEN, normalizeCode } from '../net/link.ts';
 import type { Link } from '../net/link.ts';
 import { sfx } from '../core/audio.ts';
 
-export type OnlineGame = 'hockey' | 'lucky';
-const GAME_NAME: Record<OnlineGame, string> = { hockey: 'Air Hockey', lucky: 'Suerte 2048' };
+export type OnlineGame = 'hockey' | 'lucky' | 'capy';
+const GAME_NAME: Record<OnlineGame, string> = { hockey: 'Air Hockey', lucky: 'Suerte 2048', capy: 'Capy Run' };
 
 interface Props {
   initialGame?: OnlineGame;
@@ -87,7 +87,7 @@ export default function Online({ initialGame, initialCode, onBack, onStart }: Pr
   };
   const share = async () => {
     sfx.click();
-    const data = { title: 'BrNeon Games', text: `Juguemos ${game ? GAME_NAME[game] : ''} online. Código de sala: ${code}`, url: inviteUrl() };
+    const data = { title: 'BrNeon Arcade', text: `Juguemos ${game ? GAME_NAME[game] : ''} online. Código de sala: ${code}`, url: inviteUrl() };
     if (navigator.share) { try { await navigator.share(data); return; } catch { return; } }
     void doCopy('link');
   };
@@ -104,6 +104,7 @@ export default function Online({ initialGame, initialCode, onBack, onStart }: Pr
           <h3>¿A qué quieres jugar?</h3>
           <div className="gpick">
             <button className="cab c-pink" onClick={() => { sfx.click(); setGame('hockey'); }}><span className="cab-t">Air Hockey</span><span className="cab-s">1 contra 1, la física corre en el anfitrión.</span></button>
+            <button className="cab c-cyan" onClick={() => { sfx.click(); setGame('capy'); }}><span className="cab-t">Capy Run</span><span className="cab-s">Carrera con fantasma en vivo del rival hasta el final.</span></button>
             <button className="cab c-amber" onClick={() => { sfx.click(); setGame('lucky'); }}><span className="cab-t">Suerte 2048</span><span className="cab-s">Por turnos: voltea 3 fichas y gana el que sume más.</span></button>
           </div>
         </section>

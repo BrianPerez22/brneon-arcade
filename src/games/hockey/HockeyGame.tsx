@@ -21,7 +21,7 @@ interface Particle { x: number; y: number; vx: number; vy: number; color: string
 const C0 = '#19f4ff', C1 = '#ff2bd6';
 const FONT = `'Press Start 2P', ui-monospace, monospace`;
 
-export default function HockeyGame({ settings, onChange, onExit }: { settings: Settings; onChange: (p: Partial<Settings>) => void; onExit: () => void }) {
+export default function HockeyGame({ settings, onChange = () => {}, onExit, config }: { settings: Settings; onChange?: (p: Partial<Settings>) => void; onExit: () => void; config?: { players?: 1 | 2; online?: { link: any } } }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<View | null>(null);
@@ -262,7 +262,7 @@ export default function HockeyGame({ settings, onChange, onExit }: { settings: S
           <span className="to">a {settings.goalsToWin}</span>
           <b className="c1">{score[1]} {one ? (settings.aiLevel === 'impossible' ? <Skull size={14} /> : 'CPU') : 'J2'}</b>
         </div>
-        <button className="tbtn" onClick={openSkins} aria-label="Skins">Skins</button>
+        <button className="ibtn" onClick={openSkins} aria-label="Skins" title="Skins">🎨</button>
         <button className="ibtn" onClick={() => (overlay === 'play' ? pause() : null)} aria-label="Pausa">❚❚</button>
       </header>
       <div className="stage" ref={boxRef}>

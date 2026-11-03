@@ -18,14 +18,10 @@ export interface Settings {
   puck: string;      // skin del disco
   aiLevel: 'easy' | 'hard' | 'impossible';
   goalsToWin: number;
+  capyColor: string; // color neón del juego del capibara
 }
 export const defaultSettings: Settings = {
-  sound: true, ball: 'cian', mallet1: 'cian', mallet2: 'magenta', puck: 'clasico', aiLevel: 'easy', goalsToWin: 7,
+  sound: true, ball: 'cian', mallet1: 'cian', mallet2: 'magenta', puck: 'clasico', aiLevel: 'hard', goalsToWin: 7, capyColor: 'azul',
 };
-export const loadSettings = (): Settings => {
-  const s = { ...defaultSettings, ...load<Partial<Settings>>('settings', {}) };
-  // las dificultades antiguas ('normal' ...) ya no existen: se vuelve a la nueva Fácil
-  if (!['easy', 'hard', 'impossible'].includes(s.aiLevel)) s.aiLevel = 'easy';
-  return s;
-};
+export const loadSettings = (): Settings => ({ ...defaultSettings, ...load<Partial<Settings>>('settings', {}) });
 export const saveSettings = (s: Settings) => save('settings', s);

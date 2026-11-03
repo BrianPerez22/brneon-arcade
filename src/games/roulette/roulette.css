@@ -1,0 +1,217 @@
+/* ===== Ruleta Colombiana: Pixel Art Water Revolver ===== */
+.roulette {
+  font-family: var(--px);
+  user-select: none;
+}
+
+.roulette-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.roulette-cv {
+  width: min(100%, 480px);
+  height: 280px;
+  background: #090718;
+  border: 3px solid #1a1638;
+  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 #000;
+  border-radius: 6px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Panel del turno */
+.turn-card {
+  width: min(100%, 480px);
+  background: #120e26;
+  border: 2px solid var(--line);
+  box-shadow: 3px 3px 0 #000;
+  border-radius: 6px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.turn-player {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.turn-player span {
+  font-size: 8px;
+  color: var(--mute);
+  letter-spacing: 1px;
+}
+
+.turn-player b {
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  text-shadow: 2px 2px 0 #000;
+}
+
+/* Indicador de recámaras del tambor */
+.cylinder-hud {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.chamber-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid var(--line);
+  background: #0b0818;
+  display: grid;
+  place-items: center;
+  font-size: 8px;
+  box-shadow: 1px 1px 0 #000;
+}
+
+.chamber-dot.done {
+  background: #1b1535;
+  color: #7d75a8;
+  border-color: #3b3166;
+}
+
+.chamber-dot.current {
+  border-color: var(--amber);
+  background: #ffb80028;
+  color: var(--amber);
+  box-shadow: 0 0 8px var(--amber);
+  animation: pulse-dot 0.6s infinite alternate;
+}
+
+@keyframes pulse-dot {
+  from { transform: scale(1); }
+  to { transform: scale(1.2); }
+}
+
+/* Botón de gatillo arcade */
+.trigger-btn {
+  width: min(100%, 360px);
+  min-height: 56px;
+  font-size: 13px !important;
+  margin-top: 12px;
+  background: #19f4ff22;
+  border-color: var(--cyan);
+  box-shadow: 0 5px 0 #000, 0 5px 0 2px var(--cyan);
+}
+
+.trigger-btn:active {
+  transform: translateY(5px);
+  box-shadow: 0 0 0 2px var(--cyan);
+}
+
+.trigger-btn.danger {
+  background: #ff3b6b28;
+  border-color: #ff3b6b;
+  box-shadow: 0 5px 0 #000, 0 5px 0 2px #ff3b6b;
+  color: #ff85a2;
+}
+
+/* Pantalla roja cuando explota el tiro de agua */
+.red-splash-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: rgba(180, 0, 30, 0.94);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px;
+  text-align: center;
+  animation: flash-red 0.15s ease-out;
+  backdrop-filter: blur(2px);
+}
+
+@keyframes flash-red {
+  0% { background: #ffffff; }
+  25% { background: #ff0033; }
+  100% { background: rgba(180, 0, 30, 0.94); }
+}
+
+.red-splash-card {
+  background: #2b0610;
+  border: 3px solid #ff3b6b;
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px #000, 6px 6px 0 #000, 0 0 30px #ff3b6b88;
+  padding: 24px 20px;
+  max-width: 420px;
+  width: 100%;
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+}
+
+.red-title {
+  font-size: clamp(20px, 6vw, 28px);
+  color: #fff;
+  text-shadow: 3px 3px 0 #000, 0 0 16px #ff3b6b;
+  margin: 0;
+  letter-spacing: 2px;
+}
+
+.splash-water-drops {
+  font-size: 32px;
+  animation: drip 1s infinite alternate;
+}
+
+@keyframes drip {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(4px); }
+}
+
+/* Selector de jugadores estilo Suerte */
+.player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 380px;
+}
+
+.player-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #140f29;
+  border: 2px solid var(--line);
+  padding: 8px 12px;
+  border-radius: 4px;
+  box-shadow: 2px 2px 0 #000;
+}
+
+.player-item input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: var(--px);
+  font-size: 11px;
+  outline: none;
+}
+
+.player-item input:focus {
+  color: var(--cyan);
+}
+
+.player-color-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid #fff;
+  box-shadow: 1px 1px 0 #000;
+}

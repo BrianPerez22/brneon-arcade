@@ -5,6 +5,7 @@ export type PowerType = 'BOMB' | 'LASER' | 'SHOTS' | 'SUPER';
 export interface Tile {
   id: number; x: number; y: number; vx: number; vy: number;
   r: number; value: number; spawn: number; cool: number; mega: boolean;
+  bounces?: number;
 }
 export interface Cue {
   x: number; y: number; vx: number; vy: number; r: number;
@@ -143,16 +144,34 @@ function clampTile(s: PoolState, t: Tile) {
 }
 
 function hitTile(s: PoolState, t: Tile, nx: number, ny: number, chain: boolean) {
+  if (t.value <= 2) {
+    t.bounces = (t.bounces ?? 0) + 1;
+    if (t.bounces <= 1) {
+      // El 2 primero rebota con energía para generar combos con otras fichas
+      t.cool = 16;
+      s.hitsThisShot++;
+      const mult = 1 + Math.floor((s.hitsThisShot - 1) / 3);
+      const pts = t.value * mult;
+      s.score += pts;
+      t.vx += nx * 6;
+      t.vy += ny * 6;
+      s.events.push({ t: 'hit', x: t.x, y: t.y, value: 2, pts, chain });
+      return;
+    }
+    // Al segundo impacto se rompe y suma bonus de combo
+    s.tiles = s.tiles.filter((o) => o !== t);
+    s.hitsThisShot++;
+    const mult = 1 + Math.floor((s.hitsThisShot - 1) / 3);
+    const pts = t.value * mult + 100;
+    s.score += pts;
+    s.events.push({ t: 'pop', x: t.x, y: t.y, pts });
+    return;
+  }
   s.tiles = s.tiles.filter((o) => o !== t);
   s.hitsThisShot++;
   const mult = 1 + Math.floor((s.hitsThisShot - 1) / 3);
   const pts = t.value * mult;
   s.score += pts;
-  if (t.value <= 2) {
-    s.score += 100;
-    s.events.push({ t: 'pop', x: t.x, y: t.y, pts: pts + 100 });
-    return;
-  }
   s.events.push({ t: 'hit', x: t.x, y: t.y, value: t.value, pts, chain });
   const sup = s.superActive && t.value >= 8;
   const n = sup ? 4 : 2;
