@@ -14,6 +14,56 @@
   box-shadow: 0 0 0 2px var(--cyan), 4px 4px 0 #000;
 }
 
+.cy .cv.spectator {
+  filter: grayscale(1);
+}
+
+.cy .ov.cy-spectator {
+  display: block;
+  padding: 8px;
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+.cy .cy-spectator-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 5px 12px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 6px 10px;
+  color: #eee9ff;
+  font: 9px var(--px);
+  line-height: 1.5;
+  background: rgba(12, 9, 27, 0.72);
+  border: 1px solid #77718f;
+  border-radius: 5px;
+  box-shadow: 1px 2px 0 #0008;
+  pointer-events: auto;
+}
+
+.cy .cy-spectator-status { color: #ff7d9b; }
+.cy .cy-spectator-bar b { color: var(--cyan); }
+.cy .cy-spectator-watch { color: #c9c3db; }
+.cy .cy-spectator-exit {
+  padding: 3px 7px;
+  color: #eee9ff;
+  font: inherit;
+  background: #242039;
+  border: 1px solid #77718f;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+@media (max-width: 420px) {
+  .cy .cy-spectator { padding: 5px; }
+  .cy .cy-spectator-bar { gap: 3px 8px; padding: 5px 7px; font-size: 8px; }
+}
+
 /* Header & HUD pixel art */
 .cy .gbar {
   padding: 8px 12px;

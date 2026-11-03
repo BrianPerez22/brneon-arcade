@@ -25,3 +25,18 @@ export const defaultSettings: Settings = {
 };
 export const loadSettings = (): Settings => ({ ...defaultSettings, ...load<Partial<Settings>>('settings', {}) });
 export const saveSettings = (s: Settings) => save('settings', s);
+
+// sessionStorage para estado de sesión (no persiste entre cierres)
+const SS = 'brneon:';
+export function sload<T>(key: string, fallback: T): T {
+  try {
+    const v = sessionStorage.getItem(SS + key);
+    return v === null ? fallback : (JSON.parse(v) as T);
+  } catch { return fallback; }
+}
+export function ssave<T>(key: string, value: T) {
+  try { sessionStorage.setItem(SS + key, JSON.stringify(value)); } catch { /* ignorar */ }
+}
+export function sclear(key: string) {
+  try { sessionStorage.removeItem(SS + key); } catch { /* ignorar */ }
+}

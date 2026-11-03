@@ -1,18 +1,19 @@
 // Motor de física de Neon 2048 Pool. Sin DOM: se puede simular en Node (tools/sim-pool.ts).
 
-export type PowerType = 'BOMB' | 'LASER' | 'SHOTS' | 'SUPER';
+export type PowerType = 'BOMB' | 'LASER' | 'SHOTS' | 'SUPER' | 'PIXEL' | 'LAUNCH';
 
 export interface Tile {
   id: number; x: number; y: number; vx: number; vy: number;
   r: number; value: number; spawn: number; cool: number; mega: boolean;
   bounces?: number;
+  breakPending?: boolean; breakBonus?: number;
 }
 export interface Cue {
   x: number; y: number; vx: number; vy: number; r: number;
   sx: number; sy: number; rot: number; pulse: number;
   trail: { x: number; y: number }[];
 }
-export interface Power { id: number; x: number; y: number; type: PowerType; pulse: number; }
+export interface Power { id: number; x: number; y: number; type: PowerType; pulse: number; ttl: number; }
 
 export type PoolEvent =
   | { t: 'wall'; x: number; y: number }
@@ -30,6 +31,8 @@ export interface PoolState {
   tiles: Tile[]; powers: Power[]; cue: Cue;
   moving: boolean; hitsThisShot: number; frames: number;
   superActive: boolean; laserTurns: number;
+  pixelTurns: number;      // turnos restantes de bola pixelada (negativo)
+  launchTile: number | null; // id de la ficha que el jugador puede lanzar como bola
   status: 'PLAYING' | 'WIN' | 'LOSE';
   events: PoolEvent[]; nextId: number; seed: number;
 }
@@ -94,6 +97,7 @@ export function createPool(level: number, portrait: boolean, seed = (Math.random
     w, h, portrait, level, score: 0, shots: cfg.shots,
     tiles: [], powers: [], cue: newCue(portrait ? w / 2 : 110, portrait ? h - 130 : h / 2),
     moving: false, hitsThisShot: 0, frames: 0, superActive: false, laserTurns: 0,
+    pixelTurns: 0, launchTile: null,
     status: 'PLAYING', events: [], nextId: 1, seed,
   };
   const n = cfg.tiles.length;
@@ -109,7 +113,8 @@ export function createPool(level: number, portrait: boolean, seed = (Math.random
 }
 
 export function spawnPower(s: PoolState) {
-  const types: PowerType[] = ['BOMB', 'LASER', 'SHOTS', 'SUPER', 'SHOTS', 'BOMB'];
+  // Positivos: peso alto. Negativos (PIXEL): peso muy bajo (~8%)
+  const pool: PowerType[] = ['BOMB', 'LASER', 'SHOTS', 'SUPER', 'SHOTS', 'BOMB', 'LAUNCH', 'LAUNCH', 'PIXEL'];
   for (let tries = 0; tries < 30; tries++) {
     const x = WALL + 40 + rng(s) * (s.w - 2 * WALL - 80);
     const y = WALL + 40 + rng(s) * (s.h - 2 * WALL - 80);
@@ -117,10 +122,27 @@ export function spawnPower(s: PoolState) {
       s.tiles.every((t) => Math.hypot(x - t.x, y - t.y) > t.r + 30) &&
       s.powers.every((p) => Math.hypot(x - p.x, y - p.y) > 80);
     if (ok) {
-      s.powers.push({ id: s.nextId++, x, y, type: types[Math.floor(rng(s) * types.length)], pulse: rng(s) * 6 });
+      s.powers.push({ id: s.nextId++, x, y, type: pool[Math.floor(rng(s) * pool.length)], pulse: rng(s) * 6, ttl: 1 + Math.floor(rng(s) * 3) });
       return;
     }
   }
+}
+
+export function shootTile(s: PoolState, angle: number, power01: number): boolean {
+  if (s.status !== 'PLAYING' || s.moving || s.launchTile === null) return false;
+  const tile = s.tiles.find((t) => t.id === s.launchTile);
+  if (!tile) { s.launchTile = null; return false; }
+  const p = Math.max(0.25, Math.min(1, power01)) * MAX_POWER * 0.85;
+  tile.vx = Math.cos(angle) * p;
+  tile.vy = Math.sin(angle) * p;
+  tile.cool = 0;
+  s.launchTile = null;
+  s.moving = true;
+  s.shots--;
+  s.hitsThisShot = 0;
+  s.frames = 0;
+  s.events.push({ t: 'shoot' });
+  return true;
 }
 
 export function shoot(s: PoolState, angle: number, power01: number) {
@@ -144,10 +166,61 @@ function clampTile(s: PoolState, t: Tile) {
 }
 
 function hitTile(s: PoolState, t: Tile, nx: number, ny: number, chain: boolean) {
+  // Efecto PIXEL: la ficha se descompone 1-3 niveles adicionales
+  if (s.pixelTurns > 0) {
+    const extraBreaks = 1 + Math.floor(rng(s) * 3); // 1-3 veces
+    let targets = [t];
+    for (let i = 0; i < extraBreaks; i++) {
+      const next: Tile[] = [];
+      for (const tgt of targets) {
+        if (!s.tiles.includes(tgt) || tgt.value <= 2) continue;
+        // Descomponer sin puntos (efecto visual de pixelación)
+        s.tiles = s.tiles.filter((o) => o !== tgt);
+        const val = tgt.value / 2;
+        const r2 = tileRadius(val);
+        for (let k = 0; k < 2; k++) {
+          const a = (k * Math.PI) + rng(s) * 0.5;
+          const child: Tile = {
+            id: s.nextId++, x: tgt.x + Math.cos(a) * (r2 + 2), y: tgt.y + Math.sin(a) * (r2 + 2),
+            vx: tgt.vx + Math.cos(a) * 1.5, vy: tgt.vy + Math.sin(a) * 1.5,
+            r: r2, value: val, spawn: 0.3, cool: 18, mega: false,
+          };
+          clampTile(s, child);
+          s.tiles.push(child);
+          next.push(child);
+        }
+      }
+      targets = next;
+      if (targets.length === 0) break;
+    }
+    // La ficha original ya fue procesada por PIXEL, salir
+    if (!s.tiles.includes(t)) return;
+  }
+  if (t.value === 2 && t.breakPending) {
+    s.tiles = s.tiles.filter((o) => o !== t);
+    s.hitsThisShot++;
+    const pts = t.breakBonus ?? 100;
+    s.score += pts;
+    s.events.push({ t: 'pop', x: t.x, y: t.y, pts });
+    return;
+  }
+  if (t.value === 2 && !t.breakPending) {
+    t.breakPending = true;
+    t.cool = 16;
+    s.hitsThisShot++;
+    const mult = 1 + Math.floor((s.hitsThisShot - 1) / 3);
+    const pts = t.value * mult;
+    t.breakBonus = 100 * mult;
+    s.score += pts;
+    t.vx += nx * 4;
+    t.vy += ny * 4;
+    s.events.push({ t: 'hit', x: t.x, y: t.y, value: 2, pts, chain });
+    return;
+  }
   if (t.value <= 2) {
     t.bounces = (t.bounces ?? 0) + 1;
     if (t.bounces <= 1) {
-      // El 2 primero rebota con energía para generar combos con otras fichas
+      // Las fichas de valor 1 conservan el rebote inicial antes de romperse.
       t.cool = 16;
       s.hitsThisShot++;
       const mult = 1 + Math.floor((s.hitsThisShot - 1) / 3);
@@ -158,7 +231,7 @@ function hitTile(s: PoolState, t: Tile, nx: number, ny: number, chain: boolean) 
       s.events.push({ t: 'hit', x: t.x, y: t.y, value: 2, pts, chain });
       return;
     }
-    // Al segundo impacto se rompe y suma bonus de combo
+    // Tras el rebote inicial, el siguiente impacto rompe la ficha de valor 1.
     s.tiles = s.tiles.filter((o) => o !== t);
     s.hitsThisShot++;
     const mult = 1 + Math.floor((s.hitsThisShot - 1) / 3);
@@ -222,7 +295,15 @@ function substep(s: PoolState, dt: number): boolean {
       if (p.type === 'SHOTS') s.shots += 3;
       else if (p.type === 'LASER') s.laserTurns += 3;
       else if (p.type === 'SUPER') s.superActive = true;
-      else bomb(s, p.x, p.y);
+      else if (p.type === 'BOMB') bomb(s, p.x, p.y);
+      else if (p.type === 'PIXEL') s.pixelTurns += 2;  // negativo: 2 turnos
+      else if (p.type === 'LAUNCH') {
+        // Elegir la ficha más grande como candidata a lanzar
+        if (s.tiles.length > 0) {
+          const biggest = s.tiles.reduce((a, b) => a.r >= b.r ? a : b);
+          s.launchTile = biggest.id;
+        }
+      }
       return false;
     }
     return true;
@@ -261,7 +342,7 @@ function substep(s: PoolState, dt: number): boolean {
         c.vx -= (j / mc) * nx; c.vy -= (j / mc) * ny;
         t.vx += (j / mt) * nx; t.vy += (j / mt) * ny;
         c.sx = 0.65; c.sy = 1.35;
-        if (t.cool <= 0 && rel >= TUNING.MIN_HIT_SPEED) hitTile(s, t, nx, ny, false);
+        if (!t.breakPending && t.cool <= 0 && rel >= TUNING.MIN_HIT_SPEED) hitTile(s, t, nx, ny, false);
       }
     }
   }
@@ -286,11 +367,12 @@ function substep(s: PoolState, dt: number): boolean {
           t1.vx -= (j2 / m1) * nx; t1.vy -= (j2 / m1) * ny;
           t2.vx += (j2 / m2) * nx; t2.vy += (j2 / m2) * ny;
           if (rel >= TUNING.CHAIN_SPEED) {
+            const pendingTwo = [t1, t2].find((t) => t.value === 2 && t.breakPending);
             const free: Tile[] = [];
-            if (t1.cool <= 0) free.push(t1);
-            if (t2.cool <= 0) free.push(t2);
+            if (t1.cool <= 0 && !t1.breakPending) free.push(t1);
+            if (t2.cool <= 0 && !t2.breakPending) free.push(t2);
             // se rompe una sola ficha por choque: la más pequeña de las que estén libres
-            const target = free.length === 2 ? (t1.r <= t2.r ? t1 : t2) : free[0];
+            const target = pendingTwo ?? (free.length === 2 ? (t1.r <= t2.r ? t1 : t2) : free[0]);
             if (target) {
               const sign = target === t2 ? 1 : -1;
               hitTile(s, target, nx * sign, ny * sign, true);
@@ -321,7 +403,10 @@ export function step(s: PoolState) {
     c.sx = 1 + st; c.sy = Math.max(0.65, 1 - st * 0.7); c.rot = Math.atan2(c.vy, c.vx);
     c.trail.unshift({ x: c.x, y: c.y }); if (c.trail.length > 8) c.trail.pop();
   } else { c.vx = 0; c.vy = 0; c.trail = []; }
-  for (const t of s.tiles) { t.vx *= FRICTION_TILE; t.vy *= FRICTION_TILE; }
+  for (const t of s.tiles) {
+    const friction = t.breakPending ? 0.88 : FRICTION_TILE;
+    t.vx *= friction; t.vy *= friction;
+  }
 
   s.frames++;
   const anyMoving = any || cs > STOP || s.tiles.some((t) => Math.hypot(t.vx, t.vy) > STOP || t.spawn < 1);
@@ -332,7 +417,16 @@ function endTurn(s: PoolState) {
   s.moving = false;
   s.cue.vx = s.cue.vy = 0; s.cue.trail = [];
   s.tiles.forEach((t) => { t.vx = 0; t.vy = 0; t.cool = 0; });
+  const broken = s.tiles.filter((t) => t.breakPending);
+  for (const t of broken) {
+    const pts = t.breakBonus ?? 0;
+    s.score += pts;
+    s.events.push({ t: 'pop', x: t.x, y: t.y, pts });
+  }
+  if (broken.length) s.tiles = s.tiles.filter((t) => !t.breakPending);
   if (s.laserTurns > 0) s.laserTurns--;
+  if (s.pixelTurns > 0) s.pixelTurns--;
+  if (s.launchTile !== null && s.tiles.every((t) => t.id !== s.launchTile)) s.launchTile = null;
   if (s.superActive && s.hitsThisShot > 0) s.superActive = false;
   if (s.hitsThisShot >= 4) {
     s.shots++;
@@ -349,5 +443,18 @@ function endTurn(s: PoolState) {
     s.events.push({ t: 'lose' });
     return;
   }
-  if (s.powers.length < 2 && rng(s) < 0.6) spawnPower(s);
+  let expired = 0;
+  for (const p of s.powers) p.ttl--;
+  s.powers = s.powers.filter((p) => {
+    if (p.ttl > 0) return true;
+    expired++;
+    return false;
+  });
+  if (expired > 0) {
+    for (let i = 0; i < expired && s.powers.length < 2; i++) {
+      if (rng(s) < 0.75) spawnPower(s);
+    }
+  } else if (s.powers.length < 2 && rng(s) < 0.6) {
+    spawnPower(s);
+  }
 }

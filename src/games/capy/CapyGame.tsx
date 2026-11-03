@@ -263,6 +263,8 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
       } else if (m.t === 'start') {
         rivalRef.current.color = (m.color as string) || '#ff2bd6';
         begin(m.seed as number);
+      } else if (m.t === 'color') {
+        rivalRef.current.color = (m.color as string) || rivalRef.current.color;
       } else if (m.t === 'pos') {
         rivalRef.current.py = m.py as number;
         rivalRef.current.duck = !!m.duck;
@@ -395,6 +397,15 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
         s.deadT++; s.vy -= GRAVITY; s.py = Math.max(0, s.py + s.vy);
         if (s.py === 0) s.vy = 0;
         if (s.shake > 0) s.shake--;
+        // Quien ya cayó sigue avanzando el escenario para poder ver la carrera del rival.
+        if (overlayRef.current === 'waiting_rival') {
+          s.speed = Math.min(SPEED_MAX, s.speed + ACCEL);
+          s.score += s.speed * 0.05;
+          s.ground = (s.ground + s.speed) % 2400;
+          spawn();
+          for (const o of s.obs) o.x -= s.speed + o.vx;
+          s.obs = s.obs.filter((o) => o.x + o.w > -20);
+        }
         if (!isOnline && s.deadT === 36 && overlayRef.current === 'play') setOverlay('over');
         return;
       }
@@ -538,7 +549,7 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
           glow: rivalRef.current.color,
           t,
           pose: rivalPose,
-          step: s.anim * 0.55,
+          step: t * 12,
           ghost: true,
         });
         ctx.fillStyle = rivalRef.current.color;
@@ -552,10 +563,12 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
       const ducking = s.duck && s.onGround && !s.dead;
       const feet = GROUND - s.py;
       const pose = s.dead ? 'dead' : !s.onGround ? 'jump' : 'run';
-      ctx.save();
-      ctx.translate(OX, feet); ctx.scale(ducking ? 1.08 : 1, ducking ? DUCK_K : 1); ctx.translate(0, -0.35 * S);
-      drawCapybara(ctx, S, { glow: myAccent, t, blink: (t % 3.4) > 3.28, pose, step: overlayRef.current === 'play' ? s.anim * 0.55 : 0 });
-      ctx.restore();
+      if (!(isOnline && overlayRef.current === 'waiting_rival')) {
+        ctx.save();
+        ctx.translate(OX, feet); ctx.scale(ducking ? 1.08 : 1, ducking ? DUCK_K : 1); ctx.translate(0, -0.35 * S);
+        drawCapybara(ctx, S, { glow: myAccent, t, blink: (t % 3.4) > 3.28, pose, step: overlayRef.current === 'play' ? s.anim * 0.55 : 0 });
+        ctx.restore();
+      }
 
       for (const b of s.pops) bubble(b, 1 - (b.life ?? 0) / (b.max ?? 40));
     };
@@ -630,7 +643,7 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
       </header>
 
       <div className="stage" ref={boxRef}>
-        <canvas ref={canvasRef} className="cv" />
+        <canvas ref={canvasRef} className={`cv${overlay === 'waiting_rival' ? ' spectator' : ''}`} />
 
         {rivalAlert && (
           <div className="cy-alert">{rivalAlert}</div>
@@ -667,18 +680,13 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
         )}
 
         {overlay === 'waiting_rival' && isOnline && (
-          <div className="ov">
-            <div className="cy-card">
-              <span className="cy-badge">🫧 HAS CAÍDO 🥺</span>
-              <h2 className="ov-title pink">Tu récord: {hud.score} pts</h2>
-              <p className="ov-text">Esperando que tu rival termine la carrera...</p>
-              <div className="cy-vs-board">
-                <div className="cy-vs-p you"><span>TÚ</span><b>{hud.score} 💀</b></div>
-                <div className="cy-vs-div">VS</div>
-                <div className="cy-vs-p rival"><span>RIVAL</span><b>{rivalScore} 🏃</b></div>
-              </div>
-              <p className="cy-waiting">Mirando la carrera del rival en vivo...</p>
-              <button className="btn ghost" onClick={onExit}>✕ Salir al menú</button>
+          <div className="ov cy-spectator">
+            <div className="cy-spectator-bar">
+              <span className="cy-spectator-status">💀 Eliminado</span>
+              <span>Tú <b>{hud.score}</b></span>
+              <span>Rival <b>{rivalScore}</b> 🏃</span>
+              <span className="cy-spectator-watch">● EN VIVO · B/N</span>
+              <button className="cy-spectator-exit" onClick={onExit}>Salir ✕</button>
             </div>
           </div>
         )}
@@ -739,7 +747,10 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
         )}
 
         {showScores && <Scoreboard game="capy" title="Historial Capy Run" list={scores} onChange={setScores} onClose={() => setShowScores(false)} />}
-        {showSkins && <SkinPicker kinds={['capy']} settings={settings} onChange={onChange ?? (() => {})} onClose={() => setShowSkins(false)} />}
+        {showSkins && <SkinPicker kinds={['capy']} settings={settings} onChange={(patch) => {
+          onChange?.(patch);
+          if (patch.capyColor && link) link.send({ t: 'color', color: findCapyColor(patch.capyColor).color });
+        }} onClose={() => setShowSkins(false)} />}
       </div>
 
       <footer className="cy-ctl">

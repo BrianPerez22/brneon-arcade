@@ -11,7 +11,7 @@ import RouletteGame from './games/roulette/RouletteGame.tsx';
 import Online from './ui/Online.tsx';
 import type { OnlineGame } from './ui/Online.tsx';
 import type { Link } from './net/link.ts';
-import { loadSettings, saveSettings } from './core/storage.ts';
+import { loadSettings, saveSettings, sload, ssave } from './core/storage.ts';
 import type { Settings } from './core/storage.ts';
 import { sfx } from './core/audio.ts';
 
@@ -28,8 +28,15 @@ function inviteFromUrl(): Screen | null {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>(() => inviteFromUrl() ?? { name: 'menu' });
+  const [screen, setScreen] = useState<Screen>(() => {
+    if (inviteFromUrl()) return inviteFromUrl()!;
+    const saved = sload<Screen>('screen', { name: 'menu' });
+    // No restaurar pantallas online (requieren conexión activa)
+    if (saved.name === 'online' || saved.name === 'online-game') return { name: 'menu' };
+    return saved;
+  });
   useEffect(() => { if (location.search) history.replaceState(null, '', location.pathname); }, []);
+  useEffect(() => { ssave('screen', screen); }, [screen]);
   const [settings, setSettings] = useState<Settings>(loadSettings);
 
   useEffect(() => { sfx.enabled = settings.sound; saveSettings(settings); }, [settings]);
@@ -42,14 +49,14 @@ export default function App() {
     case 'online-game': {
       const leave = () => { screen.link.close(); setScreen(screen.game === 'hockey' ? { name: 'hockey-setup' } : screen.game === 'capy' ? { name: 'capy' } : { name: 'lucky' }); };
       if (screen.game === 'hockey') return <HockeyGame settings={settings} onChange={patch} config={{ players: 2, online: { link: screen.link } }} onExit={leave} />;
-      if (screen.game === 'capy') return <CapyGame settings={settings} online={{ link: screen.link }} onExit={leave} />;
+      if (screen.game === 'capy') return <CapyGame settings={settings} onChange={patch} online={{ link: screen.link }} onExit={leave} />;
       return <LuckyGame online={{ link: screen.link }} onExit={leave} />;
     }
     case 'skins': return <Skins settings={settings} onChange={patch} onBack={home} />;
     case 'pool': return <PoolGame settings={settings} onChange={patch} onExit={home} />;
     case 'lucky': return <LuckyGame settings={settings} onChange={patch} onExit={home} onOnline={() => setScreen({ name: 'online', game: 'lucky' })} />;
     case 'game2048': return <Game2048 settings={settings} onChange={patch} onExit={home} />;
-    case 'capy': return <CapyGame settings={settings} onExit={home} onOnline={() => setScreen({ name: 'online', game: 'capy' })} />;
+    case 'capy': return <CapyGame settings={settings} onChange={patch} onExit={home} onOnline={() => setScreen({ name: 'online', game: 'capy' })} />;
     case 'roulette': return <RouletteGame settings={settings} onChange={patch} onExit={home} />;
     case 'hockey-setup':
       return <HockeySetup settings={settings} onChange={patch} onBack={home} onStart={(players) => setScreen({ name: 'hockey', players })} onOnline={() => setScreen({ name: 'online', game: 'hockey' })} />;

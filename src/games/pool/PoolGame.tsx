@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPool, shoot, step, WALL, MAX_PULL, levelConfig } from './engine.ts';
+import { createPool, shoot, shootTile, step, WALL, MAX_PULL, levelConfig } from './engine.ts';
 import type { PoolState, PoolEvent, PowerType } from './engine.ts';
 import { applyView, fitCanvas, toLogical } from '../../core/view.ts';
 import type { View } from '../../core/view.ts';
 import { drawBall, BALL_SKINS, findSkin } from '../../core/skins.ts';
 import { sfx } from '../../core/audio.ts';
-import { load, save } from '../../core/storage.ts';
+import { load, save, sload, ssave, sclear } from '../../core/storage.ts';
 import type { Settings } from '../../core/storage.ts';
 import SkinPicker from '../../ui/SkinPicker.tsx';
 
@@ -23,10 +23,12 @@ const TILE_COLORS: Record<number, { bg: string; border: string; text: string }> 
   2: { bg: '#00ffcc', border: '#99ffe6', text: '#00332a' },
 };
 const POWER_STYLE: Record<PowerType, { color: string; label: string; text: string }> = {
-  BOMB: { color: '#ff0055', label: 'B', text: '¡BOMBA!' },
-  SHOTS: { color: '#00ffcc', label: '+3', text: '+3 TIROS' },
-  LASER: { color: '#ffea00', label: 'L', text: 'LÁSER x3' },
-  SUPER: { color: '#ff00aa', label: 'x4', text: 'SUPER SPLIT' },
+  BOMB:   { color: '#ff0055', label: 'B',  text: '¡BOMBA!' },
+  SHOTS:  { color: '#00ffcc', label: '+3', text: '+3 TIROS' },
+  LASER:  { color: '#ffea00', label: 'L',  text: 'LÁSER x3' },
+  SUPER:  { color: '#ff00aa', label: 'x4', text: 'SUPER SPLIT' },
+  PIXEL:  { color: '#9b30ff', label: 'PX', text: '☠ PIXEL CAOS' },
+  LAUNCH: { color: '#ff8800', label: '🚀', text: '¡LANZA FICHA!' },
 };
 const FONT = `'Press Start 2P', ui-monospace, monospace`;
 
@@ -57,11 +59,19 @@ function aimPath(s: PoolState, ang: number, bounces: number) {
   return { pts, hit };
 }
 
+function serializePool(s: PoolState): object {
+  return { ...s, events: [] };
+}
+
 export default function PoolGame({ settings, onChange, onExit }: { settings: Settings; onChange: (p: Partial<Settings>) => void; onExit: () => void }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<View | null>(null);
-  const stateRef = useRef<PoolState>(createPool(1, false));
+  const stateRef = useRef<PoolState>(null as unknown as PoolState);
+  if (!stateRef.current) {
+    const saved = sload<PoolState | null>('poolState', null);
+    stateRef.current = (saved && saved.level && saved.status === 'PLAYING') ? { ...saved, events: [] } : createPool(1, false);
+  }
   const overlayRef = useRef<Overlay>('intro');
   const particles = useRef<Particle[]>([]);
   const texts = useRef<FText[]>([]);
@@ -71,11 +81,14 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const [overlay, setOverlayState] = useState<Overlay>('intro');
+  const [overlay, setOverlayState] = useState<Overlay>(() => {
+    const saved = sload<Overlay | null>('poolOverlay', null);
+    return (saved === 'play') ? 'play' : 'intro';
+  });
   const [maxLevel, setMaxLevel] = useState(() => load('poolMaxLevel', 1));
   const [selLevel, setSelLevel] = useState(() => load('poolMaxLevel', 1));
   const [hi, setHi] = useState(() => load('poolHi', 0));
-  const [hud, setHud] = useState({ level: 1, score: 0, shots: 0, laser: 0, sup: false });
+  const [hud, setHud] = useState({ level: 1, score: 0, shots: 0, laser: 0, sup: false, pixel: 0, launch: false });
   const hiRef = useRef(hi);
 
   const setOverlay = useCallback((o: Overlay) => { overlayRef.current = o; setOverlayState(o); }, []);
@@ -87,6 +100,8 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
     if (keepScore) s.score = carry.current; else { carry.current = 0; }
     stateRef.current = s;
     particles.current = []; texts.current = []; drag.current = null;
+    ssave('poolState', serializePool(s));
+    ssave('poolOverlay', 'play');
     setOverlay('play');
   }, [setOverlay]);
 
@@ -152,16 +167,25 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
       }
       if (overlayRef.current === 'play') {
         if (s.status === 'WIN') {
+          sclear('poolState');
           carry.current = s.score;
           const nl = Math.max(load('poolMaxLevel', 1), s.level + 1);
           save('poolMaxLevel', nl); setMaxLevel(nl);
           setTimeout(() => setOverlay('win'), 500); overlayRef.current = 'win';
         } else if (s.status === 'LOSE') {
+          sclear('poolState');
           setTimeout(() => setOverlay('lose'), 500); overlayRef.current = 'lose';
         }
         if (s.status !== 'PLAYING' && s.score > hiRef.current) { hiRef.current = s.score; setHi(s.score); save('poolHi', s.score); }
+        if (s.status === 'PLAYING' && s.frames % 60 === 0) {
+          ssave('poolState', serializePool(s));
+          ssave('poolOverlay', 'play');
+        }
       }
-      setHud((h) => (h.level === s.level && h.score === s.score && h.shots === s.shots && h.laser === s.laserTurns && h.sup === s.superActive ? h : { level: s.level, score: s.score, shots: s.shots, laser: s.laserTurns, sup: s.superActive }));
+      setHud((h) => {
+        const next = { level: s.level, score: s.score, shots: s.shots, laser: s.laserTurns, sup: s.superActive, pixel: s.pixelTurns, launch: s.launchTile !== null };
+        return (h.level === next.level && h.score === next.score && h.shots === next.shots && h.laser === next.laser && h.sup === next.sup && h.pixel === next.pixel && h.launch === next.launch) ? h : next;
+      });
       draw(ctx, s, viewRef.current!, t);
     };
     raf = requestAnimationFrame(frame);
@@ -211,15 +235,19 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
       if (dist > 14) {
         const ang = Math.atan2(dy, dx), pw = Math.min(1, dist / MAX_PULL);
         const laser = s.laserTurns > 0;
-        const { pts, hit } = aimPath(s, ang, laser ? 3 : 1);
-        ctx.strokeStyle = laser ? '#ffea00' : '#00ffcc'; ctx.lineWidth = laser ? 3 : 2; ctx.setLineDash([5, 6]);
+        const launchTile = s.launchTile !== null ? s.tiles.find((tl) => tl.id === s.launchTile) : null;
+        const originX = launchTile ? launchTile.x : c.x;
+        const originY = launchTile ? launchTile.y : c.y;
+        const originR = launchTile ? launchTile.r : c.r;
+        const { pts, hit } = aimPath({ ...s, cue: { ...c, x: originX, y: originY, r: originR } }, ang, laser ? 3 : 1);
+        ctx.strokeStyle = launchTile ? '#ff8800' : (laser ? '#ffea00' : '#00ffcc'); ctx.lineWidth = laser ? 3 : 2; ctx.setLineDash([5, 6]);
         ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.stroke(); ctx.setLineDash([]);
         const e = pts[pts.length - 1];
-        ctx.beginPath(); ctx.arc(e.x, e.y, c.r, 0, Math.PI * 2); ctx.strokeStyle = hit ? '#ff0055' : 'rgba(255,255,255,0.4)'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.arc(e.x, e.y, originR, 0, Math.PI * 2); ctx.strokeStyle = hit ? '#ff0055' : 'rgba(255,255,255,0.4)'; ctx.lineWidth = 2; ctx.stroke();
         // barra de potencia detrás de la bola
         const len = pw * 90;
         ctx.strokeStyle = `hsl(${120 - pw * 120}, 100%, 55%)`; ctx.lineWidth = 5; ctx.lineCap = 'round';
-        ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(c.x - Math.cos(ang) * len, c.y - Math.sin(ang) * len); ctx.stroke(); ctx.lineCap = 'butt';
+        ctx.beginPath(); ctx.moveTo(originX, originY); ctx.lineTo(originX - Math.cos(ang) * len, originY - Math.sin(ang) * len); ctx.stroke(); ctx.lineCap = 'butt';
       }
     }
     // bola
@@ -242,9 +270,19 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
       const fs = Math.max(8, Math.floor(tl.r * (digits <= 2 ? 0.72 : digits === 3 ? 0.56 : 0.44)));
       upright(tl.x, tl.y + 1, () => { ctx.fillStyle = th.text; ctx.font = `${fs}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(tl.value), 0, 0); });
     }
+    if (s.launchTile !== null) {
+      const lt = s.tiles.find(tl => tl.id === s.launchTile);
+      if (lt) {
+        const sz = lt.r * 1.86;
+        ctx.strokeStyle = '#ff8800';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(lt.x - sz/2 - 4, lt.y - sz/2 - 4, sz + 8, sz + 8);
+        ctx.setLineDash([]);
+      }
+    }
     // textos flotantes
-    for (const f of texts.current) {
-      ctx.globalAlpha = Math.max(0, 1 - f.life / 45);
+    for (const f of texts.current) {      ctx.globalAlpha = Math.max(0, 1 - f.life / 45);
       upright(f.x, f.y, () => { ctx.fillStyle = f.color; ctx.font = `10px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(f.text, 0, 0); });
     }
     ctx.globalAlpha = 1;
@@ -264,8 +302,9 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
       const p = pos(e);
       // Si se toca cerca de la bola blanca, anclar directamente a la bola
       const nearCue = Math.hypot(p.x - s.cue.x, p.y - s.cue.y) < s.cue.r + 32;
-      const sx = nearCue ? s.cue.x : p.x;
-      const sy = nearCue ? s.cue.y : p.y;
+      const launchTile = s.launchTile ? s.tiles.find(t => t.id === s.launchTile) : null;
+      const sx = launchTile ? launchTile.x : (nearCue ? s.cue.x : p.x);
+      const sy = launchTile ? launchTile.y : (nearCue ? s.cue.y : p.y);
       drag.current = { id: e.pointerId, sx, sy, cx: p.x, cy: p.y };
       try { canvas.setPointerCapture(e.pointerId); } catch { /* ok */ }
     };
@@ -280,7 +319,10 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
       drag.current = null;
       const s = stateRef.current;
       const dx = d.sx - d.cx, dy = d.sy - d.cy, dist = Math.hypot(dx, dy);
-      if (e.type === 'pointerup' && dist > 14 && overlayRef.current === 'play') shoot(s, Math.atan2(dy, dx), Math.min(1, dist / MAX_PULL));
+      if (e.type === 'pointerup' && dist > 14 && overlayRef.current === 'play') {
+        if (s.launchTile !== null) shootTile(s, Math.atan2(dy, dx), Math.min(1, dist / MAX_PULL));
+        else shoot(s, Math.atan2(dy, dx), Math.min(1, dist / MAX_PULL));
+      }
     };
     canvas.addEventListener('pointerdown', down);
     window.addEventListener('pointermove', move, { passive: false });
@@ -306,6 +348,8 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
           <div className="stat hide-s"><span>Récord</span><b>{hi}</b></div>
           {hud.laser > 0 && <div className="chip amber">Láser {hud.laser}</div>}
           {hud.sup && <div className="chip pink">Split x4</div>}
+          {hud.pixel > 0 && <div className="chip" style={{ background: '#9b30ff' }}>☠ PIXEL {hud.pixel}</div>}
+          {hud.launch && <div className="chip" style={{ background: '#ff8800' }}>🚀 Lanza ficha</div>}
         </div>
         <button className="ibtn" onClick={openSkins} aria-label="Skins" title="Skins">🎨</button>
         <button className="ibtn" onClick={() => { sfx.click(); startLevel(hud.level, false); }} aria-label="Reiniciar">↻</button>
@@ -322,6 +366,8 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
               <li><i style={{ background: '#00ffcc', color: '#003' }}>+3</i> Tiros extra</li>
               <li><i style={{ background: '#ffea00', color: '#222' }}>L</i> Láser: guía con 3 rebotes</li>
               <li><i style={{ background: '#ff00aa' }}>x4</i> Super split: parte en 4</li>
+              <li><i style={{ background: '#9b30ff' }}>PX</i> PIXEL: ☠ la bola descompone fichas en cadena (negativo)</li>
+              <li><i style={{ background: '#ff8800' }}>🚀</i> Lanza: dispara una ficha como bola</li>
             </ul>
             <div className="lvlpick">
               <button className="ibtn" disabled={selLevel <= 1} onClick={() => setSelLevel(selLevel - 1)}>‹</button>
