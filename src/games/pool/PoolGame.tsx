@@ -27,7 +27,7 @@ const POWER_STYLE: Record<PowerType, { color: string; label: string; text: strin
   SHOTS:  { color: '#00ffcc', label: '+3', text: '+3 TIROS' },
   LASER:  { color: '#ffea00', label: 'L',  text: 'LÁSER x3' },
   SUPER:  { color: '#ff00aa', label: 'x4', text: 'SUPER SPLIT' },
-  PIXEL:  { color: '#9b30ff', label: 'PX', text: '☠ PIXEL CAOS' },
+  PIXEL:  { color: '#9b30ff', label: 'PX', text: '✦ PIXEL x2 PUNTOS' },
   LAUNCH: { color: '#ff8800', label: '🚀', text: '¡LANZA FICHA!' },
 };
 const FONT = `'Press Start 2P', ui-monospace, monospace`;
@@ -129,6 +129,8 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
         case 'pop': sfx.pop(); burst(e.x, e.y, '#ffffff', 22); ftext(e.x, e.y, `POP +${e.pts}`, '#00ffcc'); break;
         case 'power': sfx.power(); burst(e.x, e.y, POWER_STYLE[e.type].color, 20); ftext(e.x, e.y - 10, POWER_STYLE[e.type].text, POWER_STYLE[e.type].color); break;
         case 'bomb': sfx.bomb(); burst(e.x, e.y, '#ff0055', 40); burst(e.x, e.y, '#ffea00', 24); shake.current = 12; break;
+        case 'pixel': sfx.combo(); burst(e.x, e.y, '#9b30ff', 30); burst(e.x, e.y, '#ffffff', 14); ftext(e.x, e.y - 22, `PIXEL x${e.levels}  +${e.pts}`, '#d9a8ff'); shake.current = Math.max(shake.current, 5); break;
+        case 'smash': sfx.pop(); burst(e.x, e.y, '#ff8800', 18); shake.current = Math.max(shake.current, 3); break;
         case 'combo': sfx.combo(); ftext(e.x, e.y - 30, `COMBO x${e.hits}  +1 TIRO`, '#ffea00'); break;
         case 'win': sfx.win(); break;
         case 'lose': sfx.lose(); break;
@@ -265,6 +267,10 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
       ctx.shadowBlur = 0;
       ctx.strokeStyle = tl.mega ? '#ffffff' : th.border; ctx.lineWidth = tl.mega ? 4 : 3; ctx.strokeRect(rx, ry, sz, sz);
       if (tl.mega) { ctx.strokeStyle = '#ffea00'; ctx.lineWidth = 2; ctx.strokeRect(rx - 3, ry - 3, sz + 6, sz + 6); }
+      if (tl.launched) {
+        ctx.save(); ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 22; ctx.strokeStyle = '#ffb066'; ctx.lineWidth = 3;
+        ctx.strokeRect(rx - 5, ry - 5, sz + 10, sz + 10); ctx.restore();
+      }
       ctx.fillStyle = '#ffffff'; ctx.fillRect(rx + 2, ry + 2, 3, 3);
       const digits = String(tl.value).length;
       const fs = Math.max(8, Math.floor(tl.r * (digits <= 2 ? 0.72 : digits === 3 ? 0.56 : 0.44)));
@@ -348,7 +354,7 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
           <div className="stat hide-s"><span>Récord</span><b>{hi}</b></div>
           {hud.laser > 0 && <div className="chip amber">Láser {hud.laser}</div>}
           {hud.sup && <div className="chip pink">Split x4</div>}
-          {hud.pixel > 0 && <div className="chip" style={{ background: '#9b30ff' }}>☠ PIXEL {hud.pixel}</div>}
+          {hud.pixel > 0 && <div className="chip" style={{ background: '#9b30ff' }}>✦ PIXEL x2 · {hud.pixel}</div>}
           {hud.launch && <div className="chip" style={{ background: '#ff8800' }}>🚀 Lanza ficha</div>}
         </div>
         <button className="ibtn" onClick={openSkins} aria-label="Skins" title="Skins">🎨</button>
@@ -366,8 +372,8 @@ export default function PoolGame({ settings, onChange, onExit }: { settings: Set
               <li><i style={{ background: '#00ffcc', color: '#003' }}>+3</i> Tiros extra</li>
               <li><i style={{ background: '#ffea00', color: '#222' }}>L</i> Láser: guía con 3 rebotes</li>
               <li><i style={{ background: '#ff00aa' }}>x4</i> Super split: parte en 4</li>
-              <li><i style={{ background: '#9b30ff' }}>PX</i> PIXEL: ☠ la bola descompone fichas en cadena (negativo)</li>
-              <li><i style={{ background: '#ff8800' }}>🚀</i> Lanza: dispara una ficha como bola</li>
+              <li><i style={{ background: '#9b30ff' }}>PX</i> PIXEL: ¡bonus! cada golpe pulveriza la ficha en cascada y suma puntos x2</li>
+              <li><i style={{ background: '#ff8800' }}>🚀</i> Lanza: dispara una ficha como bola: rompe todas las que toque</li>
             </ul>
             <div className="lvlpick">
               <button className="ibtn" disabled={selLevel <= 1} onClick={() => setSelLevel(selLevel - 1)}>‹</button>

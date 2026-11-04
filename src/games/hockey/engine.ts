@@ -195,6 +195,50 @@ export function restart(s: HockeyState) {
   placeServe(s);
 }
 
+// ---------------------------------------------------------------- Online (el anfitrión simula, el invitado dibuja)
+/** Invitado: mueve SOLO su propia paleta con las mismas reglas que el anfitrión, para que responda sin retraso. */
+export function stepOwnMallet(s: HockeyState, i: 0 | 1) {
+  for (let k = 0; k < SUBSTEPS; k++) moveMallet(s, i, 1 / SUBSTEPS);
+}
+
+const PHASES = ['COUNT', 'PLAY', 'GOAL', 'OVER'] as const;
+const r1 = (n: number) => Math.round(n * 10) / 10;
+export interface HSnap {
+  pu: [number, number, number, number];            // disco: x, y, vx, vy
+  m: [[number, number, number, number], [number, number, number, number]]; // paletas: x, y, vx, vy
+  sc: [number, number]; ph: number; sv: 0 | 1; w: -1 | 0 | 1;
+  ev: HEvent[];                                     // eventos desde el último envío (sonidos, goles, cuenta atrás)
+}
+export function makeSnap(s: HockeyState, ev: HEvent[]): HSnap {
+  const mm = (i: 0 | 1): [number, number, number, number] => { const m = s.mallets[i]; return [r1(m.x), r1(m.y), r1(m.vx), r1(m.vy)]; };
+  return {
+    pu: [r1(s.puck.x), r1(s.puck.y), r1(s.puck.vx), r1(s.puck.vy)], m: [mm(0), mm(1)],
+    sc: [s.score[0], s.score[1]], ph: PHASES.indexOf(s.phase), sv: s.serve, w: s.winner === null ? -1 : s.winner, ev,
+  };
+}
+/**
+ * Aplica un snapshot. `k` = fotogramas transcurridos desde que llegó: el disco y la paleta rival se extrapolan
+ * k pasos (máx. 4) para que el movimiento sea fluido entre paquetes. Con `own` la paleta propia no se toca.
+ */
+export function applySnap(s: HockeyState, n: HSnap, own: 0 | 1 | null, k = 0) {
+  const kk = Math.min(4, k);
+  s.puck.x = n.pu[0] + n.pu[2] * kk;
+  s.puck.y = clamp(n.pu[1] + n.pu[3] * kk, PUCK_R, HH - PUCK_R);
+  s.puck.vx = n.pu[2]; s.puck.vy = n.pu[3];
+  for (const i of [0, 1] as const) {
+    const m = s.mallets[i], v = n.m[i];
+    if (i === own) {
+      // si la paleta propia se desvió mucho de lo que ve el anfitrión (p. ej. tras un reinicio), se alinea
+      if (Math.hypot(m.x - v[0], m.y - v[1]) > 150) { m.x = v[0]; m.y = v[1]; m.tx = v[0]; m.ty = v[1]; }
+      continue;
+    }
+    const b = bounds(i);
+    m.x = clamp(v[0] + v[2] * kk, b.x0, b.x1); m.y = clamp(v[1] + v[3] * kk, b.y0, b.y1); m.vx = v[2]; m.vy = v[3];
+  }
+  s.score[0] = n.sc[0]; s.score[1] = n.sc[1];
+  s.phase = PHASES[n.ph] ?? 'PLAY'; s.serve = n.sv; s.winner = n.w === -1 ? null : n.w;
+}
+
 // ---------------------------------------------------------------- IA (jugador 1, derecha)
 // Fácil = nueva (de verdad fácil). Difícil = la antigua "normal". Imposible = la antigua "difícil".
 export const AI_LEVELS = {

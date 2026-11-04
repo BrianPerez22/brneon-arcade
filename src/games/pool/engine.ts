@@ -7,6 +7,7 @@ export interface Tile {
   r: number; value: number; spawn: number; cool: number; mega: boolean;
   bounces?: number;
   breakPending?: boolean; breakBonus?: number;
+  launched?: boolean;      // ficha lanzada por el jugador (🚀): funciona como bola y rompe todo lo que toca
 }
 export interface Cue {
   x: number; y: number; vx: number; vy: number; r: number;
@@ -23,6 +24,8 @@ export type PoolEvent =
   | { t: 'bomb'; x: number; y: number }
   | { t: 'shoot' }
   | { t: 'combo'; x: number; y: number; hits: number }
+  | { t: 'pixel'; x: number; y: number; pts: number; levels: number }
+  | { t: 'smash'; x: number; y: number }
   | { t: 'win' } | { t: 'lose' };
 
 export interface PoolState {
@@ -31,7 +34,7 @@ export interface PoolState {
   tiles: Tile[]; powers: Power[]; cue: Cue;
   moving: boolean; hitsThisShot: number; frames: number;
   superActive: boolean; laserTurns: number;
-  pixelTurns: number;      // turnos restantes de bola pixelada (negativo)
+  pixelTurns: number;      // turnos restantes de bola pixelada (bonus: pulveriza fichas en cascada y suma puntos)
   launchTile: number | null; // id de la ficha que el jugador puede lanzar como bola
   status: 'PLAYING' | 'WIN' | 'LOSE';
   events: PoolEvent[]; nextId: number; seed: number;
@@ -47,6 +50,9 @@ const WALL_BOUNCE_TILE = 0.85;
 export const TUNING = {
   CHAIN_SPEED: 1.8,   // velocidad relativa mínima para reacción en cadena ficha-ficha
   MIN_HIT_SPEED: 1.2, // golpe mínimo de la bola para romper una ficha
+  LAUNCH_HIT_SPEED: 0.6, // una ficha lanzada rompe lo que toca con mucho menos impulso
+  PIXEL_MULT: 2,      // multiplicador de puntos de cada rotura del efecto PIXEL
+  PIXEL_TURNS: 3,     // turnos que dura el efecto PIXEL
   SHOT_SCALE: 1.5,     // multiplicador de tiros por nivel (para pruebas de balance)
 };
 const SUBSTEPS = 4;
@@ -113,8 +119,8 @@ export function createPool(level: number, portrait: boolean, seed = (Math.random
 }
 
 export function spawnPower(s: PoolState) {
-  // Positivos: peso alto. Negativos (PIXEL): peso muy bajo (~8%)
-  const pool: PowerType[] = ['BOMB', 'LASER', 'SHOTS', 'SUPER', 'SHOTS', 'BOMB', 'LAUNCH', 'LAUNCH', 'PIXEL'];
+  // Todos son bonus. PIXEL (pulveriza fichas en cascada y da puntos) y LAUNCH (lanza una ficha) aparecen bastante.
+  const pool: PowerType[] = ['BOMB', 'LASER', 'SHOTS', 'SUPER', 'SHOTS', 'BOMB', 'LAUNCH', 'LAUNCH', 'PIXEL', 'PIXEL'];
   for (let tries = 0; tries < 30; tries++) {
     const x = WALL + 40 + rng(s) * (s.w - 2 * WALL - 80);
     const y = WALL + 40 + rng(s) * (s.h - 2 * WALL - 80);
@@ -136,6 +142,7 @@ export function shootTile(s: PoolState, angle: number, power01: number): boolean
   tile.vx = Math.cos(angle) * p;
   tile.vy = Math.sin(angle) * p;
   tile.cool = 0;
+  tile.launched = true;
   s.launchTile = null;
   s.moving = true;
   s.shots--;
@@ -165,37 +172,48 @@ function clampTile(s: PoolState, t: Tile) {
   t.y = Math.max(WALL + t.r, Math.min(s.h - WALL - t.r, t.y));
 }
 
-function hitTile(s: PoolState, t: Tile, nx: number, ny: number, chain: boolean) {
-  // Efecto PIXEL: la ficha se descompone 1-3 niveles adicionales
-  if (s.pixelTurns > 0) {
-    const extraBreaks = 1 + Math.floor(rng(s) * 3); // 1-3 veces
-    let targets = [t];
-    for (let i = 0; i < extraBreaks; i++) {
-      const next: Tile[] = [];
-      for (const tgt of targets) {
-        if (!s.tiles.includes(tgt) || tgt.value <= 2) continue;
-        // Descomponer sin puntos (efecto visual de pixelación)
-        s.tiles = s.tiles.filter((o) => o !== tgt);
-        const val = tgt.value / 2;
-        const r2 = tileRadius(val);
-        for (let k = 0; k < 2; k++) {
-          const a = (k * Math.PI) + rng(s) * 0.5;
-          const child: Tile = {
-            id: s.nextId++, x: tgt.x + Math.cos(a) * (r2 + 2), y: tgt.y + Math.sin(a) * (r2 + 2),
-            vx: tgt.vx + Math.cos(a) * 1.5, vy: tgt.vy + Math.sin(a) * 1.5,
-            r: r2, value: val, spawn: 0.3, cool: 18, mega: false,
-          };
-          clampTile(s, child);
-          s.tiles.push(child);
-          next.push(child);
-        }
+/**
+ * Efecto PIXEL (bonus): la ficha golpeada se pulveriza en cascada, 2-3 niveles de golpe.
+ * Cada rotura da puntos x2, cuenta como un golpe del combo (4 golpes = +1 tiro) y suelta fichas más pequeñas.
+ */
+function pixelShatter(s: PoolState, t: Tile) {
+  const depth = 2 + Math.floor(rng(s) * 2);
+  let level: Tile[] = [t];
+  let total = 0, levels = 0;
+  for (let d = 0; d < depth && level.length; d++) {
+    const next: Tile[] = [];
+    for (const tg of level) {
+      if (!s.tiles.includes(tg) || tg.value <= 2) continue;
+      if (s.tiles.length > 36) break;            // tope de fichas en mesa
+      s.tiles = s.tiles.filter((o) => o !== tg);
+      s.hitsThisShot++;
+      const mult = 1 + Math.floor((s.hitsThisShot - 1) / 3);
+      const pts = tg.value * mult * TUNING.PIXEL_MULT;
+      s.score += pts; total += pts;
+      s.events.push({ t: 'hit', x: tg.x, y: tg.y, value: tg.value, pts, chain: true });
+      const val = tg.value / 2;
+      const r2 = tileRadius(val);
+      const base = rng(s) * Math.PI;
+      for (let k = 0; k < 2; k++) {
+        const a = base + k * Math.PI;
+        const child: Tile = {
+          id: s.nextId++, x: tg.x + Math.cos(a) * (r2 + 2), y: tg.y + Math.sin(a) * (r2 + 2),
+          vx: tg.vx + Math.cos(a) * 2.4, vy: tg.vy + Math.sin(a) * 2.4,
+          r: r2, value: val, spawn: 0.3, cool: 18, mega: false,
+        };
+        clampTile(s, child);
+        s.tiles.push(child);
+        next.push(child);
       }
-      targets = next;
-      if (targets.length === 0) break;
     }
-    // La ficha original ya fue procesada por PIXEL, salir
-    if (!s.tiles.includes(t)) return;
+    if (next.length) levels++;
+    level = next;
   }
+  if (total > 0) s.events.push({ t: 'pixel', x: t.x, y: t.y, pts: total, levels });
+}
+
+function hitTile(s: PoolState, t: Tile, nx: number, ny: number, chain: boolean) {
+  if (s.pixelTurns > 0 && t.value > 2 && s.tiles.includes(t)) { pixelShatter(s, t); return; }
   if (t.value === 2 && t.breakPending) {
     s.tiles = s.tiles.filter((o) => o !== t);
     s.hitsThisShot++;
@@ -265,7 +283,7 @@ function hitTile(s: PoolState, t: Tile, nx: number, ny: number, chain: boolean) 
 
 function bomb(s: PoolState, x: number, y: number) {
   s.events.push({ t: 'bomb', x, y });
-  const victims = s.tiles.filter((t) => Math.hypot(t.x - x, t.y - y) < 130 + t.r);
+  const victims = s.tiles.filter((t) => !t.launched && Math.hypot(t.x - x, t.y - y) < 130 + t.r);
   for (const t of victims) {
     if (!s.tiles.includes(t)) continue;
     const d = Math.hypot(t.x - x, t.y - y) || 1;
@@ -289,14 +307,15 @@ function substep(s: PoolState, dt: number): boolean {
   }
 
   // --- power-ups
+  const flying = s.tiles.find((t) => t.launched);
   s.powers = s.powers.filter((p) => {
-    if (Math.hypot(c.x - p.x, c.y - p.y) < c.r + 14) {
+    if (Math.hypot(c.x - p.x, c.y - p.y) < c.r + 14 || (flying && Math.hypot(flying.x - p.x, flying.y - p.y) < flying.r + 14)) {
       s.events.push({ t: 'power', x: p.x, y: p.y, type: p.type });
       if (p.type === 'SHOTS') s.shots += 3;
       else if (p.type === 'LASER') s.laserTurns += 3;
       else if (p.type === 'SUPER') s.superActive = true;
       else if (p.type === 'BOMB') bomb(s, p.x, p.y);
-      else if (p.type === 'PIXEL') s.pixelTurns += 2;  // negativo: 2 turnos
+      else if (p.type === 'PIXEL') s.pixelTurns += TUNING.PIXEL_TURNS;  // bonus: puntos extra en cascada
       else if (p.type === 'LAUNCH') {
         // Elegir la ficha más grande como candidata a lanzar
         if (s.tiles.length > 0) {
@@ -316,16 +335,17 @@ function substep(s: PoolState, dt: number): boolean {
     if (Math.hypot(t.vx, t.vy) > STOP) {
       moving = true;
       t.x += t.vx * dt; t.y += t.vy * dt;
-      if (t.x - t.r < WALL) { t.x = WALL + t.r; t.vx = Math.abs(t.vx) * WALL_BOUNCE_TILE; }
-      else if (t.x + t.r > s.w - WALL) { t.x = s.w - WALL - t.r; t.vx = -Math.abs(t.vx) * WALL_BOUNCE_TILE; }
-      if (t.y - t.r < WALL) { t.y = WALL + t.r; t.vy = Math.abs(t.vy) * WALL_BOUNCE_TILE; }
-      else if (t.y + t.r > s.h - WALL) { t.y = s.h - WALL - t.r; t.vy = -Math.abs(t.vy) * WALL_BOUNCE_TILE; }
+      const wb = t.launched ? WALL_BOUNCE_CUE : WALL_BOUNCE_TILE;
+      if (t.x - t.r < WALL) { t.x = WALL + t.r; t.vx = Math.abs(t.vx) * wb; }
+      else if (t.x + t.r > s.w - WALL) { t.x = s.w - WALL - t.r; t.vx = -Math.abs(t.vx) * wb; }
+      if (t.y - t.r < WALL) { t.y = WALL + t.r; t.vy = Math.abs(t.vy) * wb; }
+      else if (t.y + t.r > s.h - WALL) { t.y = s.h - WALL - t.r; t.vy = -Math.abs(t.vy) * wb; }
     } else { t.vx = 0; t.vy = 0; }
   }
 
   // --- bola vs fichas
   for (const t of s.tiles.slice()) {
-    if (!s.tiles.includes(t)) continue;
+    if (!s.tiles.includes(t) || t.launched) continue;   // la ficha lanzada es "la bola": no choca con la blanca
     const dx = t.x - c.x, dy = t.y - c.y;
     const d = Math.hypot(dx, dy);
     const min = c.r + t.r;
@@ -363,18 +383,32 @@ function substep(s: PoolState, dt: number): boolean {
         t2.x += nx * over * (m1 / (m1 + m2)); t2.y += ny * over * (m1 / (m1 + m2));
         const rel = (t1.vx - t2.vx) * nx + (t1.vy - t2.vy) * ny;
         if (rel > 0) {
+          const shooter = t1.launched ? t1 : t2.launched ? t2 : null;
+          const pre = shooter ? { vx: shooter.vx, vy: shooter.vy } : null;
           const j2 = ((1 + 0.8) * rel) / (1 / m1 + 1 / m2);
           t1.vx -= (j2 / m1) * nx; t1.vy -= (j2 / m1) * ny;
           t2.vx += (j2 / m2) * nx; t2.vy += (j2 / m2) * ny;
-          if (rel >= TUNING.CHAIN_SPEED) {
-            const pendingTwo = [t1, t2].find((t) => t.value === 2 && t.breakPending);
-            const free: Tile[] = [];
-            if (t1.cool <= 0 && !t1.breakPending) free.push(t1);
-            if (t2.cool <= 0 && !t2.breakPending) free.push(t2);
-            // se rompe una sola ficha por choque: la más pequeña de las que estén libres
-            const target = pendingTwo ?? (free.length === 2 ? (t1.r <= t2.r ? t1 : t2) : free[0]);
+          if (rel >= (shooter ? TUNING.LAUNCH_HIT_SPEED : TUNING.CHAIN_SPEED)) {
+            let target: Tile | undefined;
+            if (shooter) {
+              // la ficha lanzada nunca se rompe: rompe SIEMPRE a la ficha que toca
+              const other = shooter === t1 ? t2 : t1;
+              if (other.breakPending || other.cool <= 0) target = other;
+            } else {
+              const pendingTwo = [t1, t2].find((t) => t.value === 2 && t.breakPending);
+              const free: Tile[] = [];
+              if (t1.cool <= 0 && !t1.breakPending) free.push(t1);
+              if (t2.cool <= 0 && !t2.breakPending) free.push(t2);
+              // se rompe una sola ficha por choque: la más pequeña de las que estén libres
+              target = pendingTwo ?? (free.length === 2 ? (t1.r <= t2.r ? t1 : t2) : free[0]);
+            }
             if (target) {
               const sign = target === t2 ? 1 : -1;
+              if (shooter && pre) {
+                // la ficha lanzada atraviesa casi sin frenarse: mantiene el 80 % de su impulso
+                shooter.vx = pre.vx * 0.8 + shooter.vx * 0.2; shooter.vy = pre.vy * 0.8 + shooter.vy * 0.2;
+                s.events.push({ t: 'smash', x: target.x, y: target.y });
+              }
               hitTile(s, target, nx * sign, ny * sign, true);
               return true; // la lista cambió: se retoma en el siguiente subpaso
             }
@@ -404,7 +438,7 @@ export function step(s: PoolState) {
     c.trail.unshift({ x: c.x, y: c.y }); if (c.trail.length > 8) c.trail.pop();
   } else { c.vx = 0; c.vy = 0; c.trail = []; }
   for (const t of s.tiles) {
-    const friction = t.breakPending ? 0.88 : FRICTION_TILE;
+    const friction = t.breakPending ? 0.88 : t.launched ? FRICTION_CUE : FRICTION_TILE;
     t.vx *= friction; t.vy *= friction;
   }
 
@@ -416,7 +450,7 @@ export function step(s: PoolState) {
 function endTurn(s: PoolState) {
   s.moving = false;
   s.cue.vx = s.cue.vy = 0; s.cue.trail = [];
-  s.tiles.forEach((t) => { t.vx = 0; t.vy = 0; t.cool = 0; });
+  s.tiles.forEach((t) => { t.vx = 0; t.vy = 0; t.cool = 0; t.launched = false; });
   const broken = s.tiles.filter((t) => t.breakPending);
   for (const t of broken) {
     const pts = t.breakBonus ?? 0;

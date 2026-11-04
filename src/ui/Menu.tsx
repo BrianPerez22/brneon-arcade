@@ -165,6 +165,16 @@ export default function Menu({ settings, onChange, go }: Props) {
         <p className="tag">Juega en solitario, en la misma pantalla o en línea con amigos.</p>
       </header>
 
+      {/* Sala online única: el anfitrión elige el juego dentro de la sala */}
+      <button className="online-hero" onClick={() => nav('online')}>
+        <span className="oh-ico" aria-hidden>🌐</span>
+        <span className="oh-txt">
+          <b>JUGAR ONLINE CON UN AMIGO</b>
+          <small>Crea una sala o únete con un código. El anfitrión elige el juego: Air Hockey, Capy Run, Suerte 2048 o Ruleta.</small>
+        </span>
+        <span className="oh-go">ENTRAR ▶</span>
+      </button>
+
       {/* Selector de cartuchos retro */}
       <nav className="cabs arcade-grid">
         {/* 1. Capy Run */}
@@ -189,10 +199,10 @@ export default function Menu({ settings, onChange, go }: Props) {
           <RouletteArt />
           <div className="cab-body">
             <span className="cab-t">Ruleta Colombiana 🔫</span>
-            <span className="cab-s">Revólver de agua pixel art: 6 recámaras, 1 sola bala de agua aleatoria. Pasa el arma y que la suerte decida.</span>
+            <span className="cab-s">Revólver de agua pixel art: 6 recámaras, 1 sola bala de agua aleatoria. Pasa el arma entre 2-8 amigos o juega 1 contra 1 online.</span>
             <div className="cab-tags">
               <i>👥 Fiesta 2-8P</i>
-              <i>💦 Chorro Agua</i>
+              <i>🌐 Online 1v1</i>
               <i>💥 Tensión</i>
             </div>
           </div>
@@ -205,7 +215,7 @@ export default function Menu({ settings, onChange, go }: Props) {
           <PoolArt />
           <div className="cab-body">
             <span className="cab-t">Neon 2048 Pool 🎱</span>
-            <span className="cab-s">Billar con física elástica: ¡haz rebotar las fichas 2 para crear combos masivos y rompe el 2048!</span>
+            <span className="cab-s">Billar con física elástica: ¡haz rebotar las fichas para crear combos masivos, pulveriza con Pixel y lanza fichas como bola!</span>
             <div className="cab-tags">
               <i>1 Jugador</i>
               <i>⚡ Rebotes</i>
@@ -220,7 +230,7 @@ export default function Menu({ settings, onChange, go }: Props) {
           <HockeyArt />
           <div className="cab-body">
             <span className="cab-t">Air Hockey 🏒</span>
-            <span className="cab-s">Duelos ultrarrápidos de disco: enfréntate a la CPU, juega de a 2 en la misma pantalla o crea salas online.</span>
+            <span className="cab-s">Duelos ultrarrápidos de disco: enfréntate a la CPU, juega de a 2 en la misma pantalla o reta a un amigo online.</span>
             <div className="cab-tags">
               <i>VS CPU</i>
               <i>2 Jugadores</i>
@@ -239,7 +249,7 @@ export default function Menu({ settings, onChange, go }: Props) {
             <div className="cab-tags">
               <i>Por turnos</i>
               <i>Contra CPU</i>
-              <i>🌐 Online</i>
+              <i>🌐 Online 1v1</i>
             </div>
           </div>
           <div className="cart-action">JUGAR ▶</div>
@@ -267,7 +277,7 @@ export default function Menu({ settings, onChange, go }: Props) {
           🎨 Skins & Capys
         </button>
         <button className="btn pink" onClick={() => nav('online')}>
-          🌐 Salas Online
+          🌐 Jugar Online
         </button>
         <button className="btn ghost" onClick={() => { sfx.unlock(); onChange({ sound: !settings.sound }); }}>
           {settings.sound ? '🔊 Sonido: ON' : '🔇 Sonido: OFF'}

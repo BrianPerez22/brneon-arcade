@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { createHockey, step, setTarget, setKeys, aiThink, restart, HW, HH, GOAL, MALLET_R, PUCK_R } from './engine.ts';
-import type { HockeyState, HEvent } from './engine.ts';
+import { createHockey, step, setTarget, setKeys, aiThink, restart, stepOwnMallet, makeSnap, applySnap, HW, HH, GOAL, MALLET_R, PUCK_R } from './engine.ts';
+import type { HockeyState, HEvent, HSnap } from './engine.ts';
+import type { Link } from '../../net/link.ts';
 import { applyView, fitCanvas, toLogical } from '../../core/view.ts';
 import type { View } from '../../core/view.ts';
 import { drawMallet, drawPuck, MALLET_SKINS, PUCK_SKINS, findSkin } from '../../core/skins.ts';
@@ -21,7 +22,7 @@ interface Particle { x: number; y: number; vx: number; vy: number; color: string
 const C0 = '#19f4ff', C1 = '#ff2bd6';
 const FONT = `'Press Start 2P', ui-monospace, monospace`;
 
-export default function HockeyGame({ settings, onChange = () => {}, onExit, config }: { settings: Settings; onChange?: (p: Partial<Settings>) => void; onExit: () => void; config?: { players?: 1 | 2; online?: { link: any } } }) {
+export default function HockeyGame({ settings, onChange = () => {}, onExit, config }: { settings: Settings; onChange?: (p: Partial<Settings>) => void; onExit: () => void; config?: { players?: 1 | 2; online?: { link: Link } } }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<View | null>(null);
@@ -35,15 +36,51 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
   const keys = useRef(new Set<string>());
   const pointers = useRef(new Map<number, 0 | 1>());
   const [overlay, setOverlayState] = useState<Overlay>('setup');
-  const [players, setPlayers] = useState<1 | 2>(() => (load<number>('hockeyPlayers', 1) === 2 ? 2 : 1));
+  const [players, setPlayers] = useState<1 | 2>(() => config?.players ?? (load<number>('hockeyPlayers', 1) === 2 ? 2 : 1));
   const [score, setScore] = useState<[number, number]>([0, 0]);
   const [winner, setWinner] = useState<0 | 1 | null>(null);
-  const one = players === 1;
+  // ---- online: el anfitrión (izquierda) simula la física; el invitado (derecha) manda su paleta y dibuja lo que recibe
+  const link = config?.online?.link;
+  const online = !!link;
+  const me: 0 | 1 = link && link.role === 'guest' ? 1 : 0;
+  const isGuest = online && me === 1;
+  const [lost, setLost] = useState(false);
+  const [goals, setGoals] = useState(settings.goalsToWin);
+  const [rematchSent, setRematchSent] = useState(false);
+  const [rivalWants, setRivalWants] = useState(false);
+  const wants = useRef({ me: false, rival: false });
+  const evBuf = useRef<HEvent[]>([]);
+  const snapRef = useRef<{ snap: HSnap | null; k: number }>({ snap: null, k: 0 });
+  const rivalSkin = useRef('magenta');
+  const lastSent = useRef({ x: -1, y: -1 });
+  const one = online ? false : players === 1;
+  const oneRef = useRef(one); oneRef.current = one;   // el bucle del juego se crea una sola vez: lee siempre el valor vigente
 
   const setOverlay = (o: Overlay) => { overlayRef.current = o; setOverlayState(o); };
-  const begin = () => { sfx.unlock(); sfx.click(); stateRef.current.goalsToWin = settingsRef.current.goalsToWin; restart(stateRef.current); setScore([0, 0]); setWinner(null); setOverlay('play'); };
+  /** Empieza (o reinicia) el partido en ESTE dispositivo. Online solo lo ordena el anfitrión: `startFromHost`. */
+  const startLocal = (g: number) => {
+    stateRef.current.goalsToWin = g; restart(stateRef.current); setScore([0, 0]); setWinner(null); setGoals(g);
+    wants.current = { me: false, rival: false }; setRematchSent(false); setRivalWants(false);
+    evBuf.current = []; snapRef.current = { snap: null, k: 0 };
+    setOverlay('play');
+  };
+  const begin = () => {
+    sfx.unlock(); sfx.click();
+    if (online) {
+      if (isGuest) return;
+      link!.send({ t: 'start', goals: settingsRef.current.goalsToWin });
+    }
+    startLocal(settingsRef.current.goalsToWin);
+  };
+  const requestRematch = () => {
+    sfx.click();
+    if (!link || wants.current.me) return;
+    wants.current.me = true; setRematchSent(true);
+    if (isGuest) link.send({ t: 'rematch' });
+    else if (wants.current.rival) begin();
+  };
   const resume = () => { sfx.unlock(); setOverlay('play'); };
-  const pause = () => { if (overlayRef.current === 'play') setOverlay('pause'); };
+  const pause = () => { if (!online && overlayRef.current === 'play') setOverlay('pause'); };
   const choosePlayers = (n: 1 | 2) => { sfx.unlock(); sfx.click(); setPlayers(n); save('hockeyPlayers', n); };
   const openSkins = () => {
     sfx.unlock(); sfx.click();
@@ -84,7 +121,7 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
     const ro = new ResizeObserver(refit); ro.observe(box);
     window.addEventListener('orientationchange', refit);
 
-    let raf = 0, last = performance.now(), acc = 0, t = 0;
+    let raf = 0, last = performance.now(), acc = 0, t = 0, sendTick = 0;
     const STEP = 1000 / 60;
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
@@ -98,11 +135,32 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
           const k = keys.current;
           const ax = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0), ay = (k.has('KeyS') ? 1 : 0) - (k.has('KeyW') ? 1 : 0);
           const bx = (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0), by = (k.has('ArrowDown') ? 1 : 0) - (k.has('ArrowUp') ? 1 : 0);
-          if (one) setKeys(s, 0, Math.max(-1, Math.min(1, ax + bx)), Math.max(-1, Math.min(1, ay + by)));
-          else { setKeys(s, 0, ax, ay); setKeys(s, 1, bx, by); }
-          if (one) aiThink(s, settingsRef.current.aiLevel, 1);
-          step(s);
-          if (s.events.length) { const ev = s.events; s.events = []; handle(s, ev); }
+          const cl = (v: number) => Math.max(-1, Math.min(1, v));
+          if (online) {
+            // online: cada jugador mueve SU paleta (WASD o flechas)
+            setKeys(s, me, cl(ax + bx), cl(ay + by));
+            if (isGuest) {
+              // invitado: no hay física aquí. Su paleta se mueve en local, el resto sale del último paquete.
+              stepOwnMallet(s, 1);
+              const sr = snapRef.current;
+              if (sr.snap) { sr.k++; applySnap(s, sr.snap, 1, sr.k); }
+              s.puck.trail.unshift({ x: s.puck.x, y: s.puck.y }); if (s.puck.trail.length > 10) s.puck.trail.pop();
+              if (++sendTick % 2 === 0) {
+                const m = s.mallets[1], x = Math.round(m.x * 10) / 10, y = Math.round(m.y * 10) / 10;
+                if (x !== lastSent.current.x || y !== lastSent.current.y) { lastSent.current = { x, y }; link!.send({ t: 'in', x, y }); }
+              }
+            } else {
+              step(s);
+              if (s.events.length) { const ev = s.events; s.events = []; handle(s, ev); evBuf.current.push(...ev); }
+              if (++sendTick % 2 === 0) { link!.send({ t: 'snap', ...makeSnap(s, evBuf.current) }); evBuf.current = []; }
+            }
+          } else {
+            if (oneRef.current) setKeys(s, 0, cl(ax + bx), cl(ay + by));
+            else { setKeys(s, 0, ax, ay); setKeys(s, 1, bx, by); }
+            if (oneRef.current) aiThink(s, settingsRef.current.aiLevel, 1);
+            step(s);
+            if (s.events.length) { const ev = s.events; s.events = []; handle(s, ev); }
+          }
         }
         particles.current.forEach((p) => { p.x += p.vx; p.y += p.vy; p.vx *= 0.96; p.vy *= 0.96; p.life++; });
         particles.current = particles.current.filter((p) => p.life < p.max);
@@ -134,6 +192,27 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---------- red (online)
+  useEffect(() => {
+    if (!link) return;
+    link.onMessage((m) => {
+      const s = stateRef.current;
+      if (m.t === 'in' && !isGuest) setTarget(s, 1, Number(m.x), Number(m.y));
+      else if (m.t === 'snap' && isGuest) {
+        if (overlayRef.current !== 'play' && overlayRef.current !== 'over') return;
+        const snap = m as unknown as HSnap;
+        snapRef.current = { snap, k: 0 };
+        applySnap(s, snap, 1, 0);
+        if (snap.ev?.length) handle(s, snap.ev);
+      } else if (m.t === 'start' && isGuest) startLocal(Number(m.goals) || 7);
+      else if (m.t === 'rematch' && !isGuest) { wants.current.rival = true; setRivalWants(true); if (wants.current.me) begin(); }
+      else if (m.t === 'skin') rivalSkin.current = String(m.m);
+    });
+    link.onClose(() => setLost(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => { link?.send({ t: 'skin', m: settings.mallet1 }); }, [settings.mallet1, link]);
+
   // ---------- entrada táctil / mouse (varios dedos a la vez, uno por jugador)
   useEffect(() => {
     const canvas = canvasRef.current!;
@@ -147,7 +226,7 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
       e.preventDefault();
       if (overlayRef.current !== 'play') return;
       const p = pos(e);
-      const who: 0 | 1 = one ? 0 : p.x < HW / 2 ? 0 : 1;
+      const who: 0 | 1 = online ? me : one ? 0 : p.x < HW / 2 ? 0 : 1;
       for (const [, w] of pointers.current) if (w === who) return; // ese jugador ya tiene un dedo
       pointers.current.set(e.pointerId, who);
       try { canvas.setPointerCapture(e.pointerId); } catch { /* ok */ }
@@ -157,7 +236,7 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
       if (overlayRef.current !== 'play') return;
       const who = pointers.current.get(e.pointerId);
       if (who !== undefined) { e.preventDefault(); aim(e, who); }
-      else if (one && e.pointerType === 'mouse') aim(e, 0); // PC: el mouse mueve tu paleta sin hacer clic
+      else if ((one || online) && e.pointerType === 'mouse') aim(e, online ? me : 0); // PC: el mouse mueve tu paleta sin hacer clic
     };
     const up = (e: PointerEvent) => {
       const who = pointers.current.get(e.pointerId);
@@ -174,7 +253,7 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
       canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', up);
       canvas.removeEventListener('lostpointercapture', up);
     };
-  }, [one]);
+  }, [one, online, me]);
 
   const draw = (ctx: CanvasRenderingContext2D, s: HockeyState, v: View, t: number) => {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -227,7 +306,10 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
 
     // paletas y disco
     const st = settingsRef.current;
-    s.mallets.forEach((m, i) => { ctx.save(); ctx.translate(m.x, m.y); drawMallet(ctx, findSkin(MALLET_SKINS, i === 0 ? st.mallet1 : st.mallet2), MALLET_R, t); ctx.restore(); });
+    s.mallets.forEach((m, i) => {
+      const id = online ? (i === me ? st.mallet1 : rivalSkin.current) : i === 0 ? st.mallet1 : st.mallet2;
+      ctx.save(); ctx.translate(m.x, m.y); drawMallet(ctx, findSkin(MALLET_SKINS, id), MALLET_R, t); ctx.restore();
+    });
     ctx.save(); ctx.translate(pk.x, pk.y); ctx.rotate(t * Math.min(6, sp * 0.3) * 0.4 + pk.x * 0.02); drawPuck(ctx, findSkin(PUCK_SKINS, st.puck), PUCK_R, t); ctx.restore();
 
     for (const p of particles.current) { ctx.globalAlpha = 1 - p.life / p.max; ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, p.size, p.size); }
@@ -250,7 +332,10 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
     }
   };
 
-  const names: [string, string] = one ? ['Tú (izquierda)', 'CPU (derecha)'] : ['Jugador 1 (izquierda)', 'Jugador 2 (derecha)'];
+  const names: [string, string] = online ? [me === 0 ? 'Tú (izquierda)' : 'Rival (izquierda)', me === 1 ? 'Tú (derecha)' : 'Rival (derecha)']
+    : one ? ['Tú (izquierda)', 'CPU (derecha)'] : ['Jugador 1 (izquierda)', 'Jugador 2 (derecha)'];
+  const lab0 = online ? (me === 0 ? 'Tú' : 'Rival') : one ? 'Tú' : 'J1';
+  const lab1 = online ? (me === 1 ? 'Tú' : 'Rival') : one ? 'CPU' : 'J2';
   const level = LEVELS.find((l) => l.id === settings.aiLevel) ?? LEVELS[0];
 
   return (
@@ -258,16 +343,36 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
       <header className="gbar">
         <button className="ibtn" onClick={onExit} aria-label="Volver al menú">‹</button>
         <div className="stats hockey-score">
-          <b className="c0">{one ? 'Tú' : 'J1'} {score[0]}</b>
-          <span className="to">a {settings.goalsToWin}</span>
-          <b className="c1">{score[1]} {one ? (settings.aiLevel === 'impossible' ? <Skull size={14} /> : 'CPU') : 'J2'}</b>
+          <b className="c0">{lab0} {score[0]}</b>
+          <span className="to">a {online ? goals : settings.goalsToWin}</span>
+          <b className="c1">{score[1]} {one ? (settings.aiLevel === 'impossible' ? <Skull size={14} /> : 'CPU') : lab1}</b>
         </div>
         <button className="ibtn" onClick={openSkins} aria-label="Skins" title="Skins">🎨</button>
-        <button className="ibtn" onClick={() => (overlay === 'play' ? pause() : null)} aria-label="Pausa">❚❚</button>
+        {!online && <button className="ibtn" onClick={() => (overlay === 'play' ? pause() : null)} aria-label="Pausa">❚❚</button>}
       </header>
       <div className="stage" ref={boxRef}>
         <canvas ref={canvasRef} className="cv" />
-        {overlay === 'setup' && (
+        {overlay === 'setup' && online && (
+          <div className="ov sheet">
+            <div className="sheet-in">
+              <h2 className="ov-title cyan">Air Hockey Online</h2>
+              <p className="ov-text">Tú juegas a la <b>{me === 0 ? 'izquierda (cian)' : 'derecha (magenta)'}</b>. Mueve la paleta con el dedo, el mouse, WASD o flechas.</p>
+              {!isGuest ? (
+                <section className="opt">
+                  <h3>Goles para ganar</h3>
+                  <div className="seg">
+                    {[3, 5, 7, 10].map((n) => <button key={n} className={settings.goalsToWin === n ? 'on' : ''} onClick={() => { sfx.click(); onChange({ goalsToWin: n }); }}>{n}</button>)}
+                  </div>
+                </section>
+              ) : <p className="waiting">Esperando a que el anfitrión empiece<i>.</i><i>.</i><i>.</i></p>}
+              <div className="sheet-actions">
+                <button className="btn ghost" onClick={openSkins}>Skins</button>
+                {!isGuest && <button className="btn cyan" onClick={begin}>¡Jugar!</button>}
+              </div>
+            </div>
+          </div>
+        )}
+        {overlay === 'setup' && !online && (
           <div className="ov sheet">
             <div className="sheet-in">
               <h2 className="ov-title cyan">Air Hockey</h2>
@@ -331,12 +436,27 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
         {overlay === 'over' && (
           <div className="ov">
             <h2 className={'ov-title ' + (winner === 0 ? 'cyan' : 'pink')}>
-              {one ? (winner === 0 ? '¡Ganaste!' : 'Gana la CPU') : winner === 0 ? 'Gana el Jugador 1' : 'Gana el Jugador 2'}
+              {online ? (winner === me ? '¡Ganaste!' : 'Gana tu rival') : one ? (winner === 0 ? '¡Ganaste!' : 'Gana la CPU') : winner === 0 ? 'Gana el Jugador 1' : 'Gana el Jugador 2'}
             </h2>
             <p className="ov-text">{score[0]} – {score[1]}</p>
-            <button className="btn cyan" onClick={begin}>Revancha</button>
-            <button className="btn ghost" onClick={toSetup}>Cambiar modo / dificultad</button>
+            {online ? (
+              rematchSent
+                ? <p className="waiting">{isGuest ? 'Esperando al anfitrión' : 'Esperando que tu rival acepte'}<i>.</i><i>.</i><i>.</i></p>
+                : <button className="btn cyan" onClick={requestRematch}>Revancha{rivalWants ? ' ⭐ ¡tu rival quiere!' : ''}</button>
+            ) : (
+              <>
+                <button className="btn cyan" onClick={begin}>Revancha</button>
+                <button className="btn ghost" onClick={toSetup}>Cambiar modo / dificultad</button>
+              </>
+            )}
             <button className="btn ghost" onClick={onExit}>Menú</button>
+          </div>
+        )}
+        {lost && (
+          <div className="ov" style={{ zIndex: 9 }}>
+            <h2 className="ov-title pink">Tu rival se desconectó</h2>
+            <p className="ov-text">La conexión se cerró.</p>
+            <button className="btn cyan" onClick={onExit}>Salir</button>
           </div>
         )}
       </div>

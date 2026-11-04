@@ -1,9 +1,9 @@
 import type { Settings } from '../core/storage.ts';
 import { sfx } from '../core/audio.ts';
 
-interface Props { settings: Settings; onChange: (p: Partial<Settings>) => void; onBack: () => void; onStart: (players: 1 | 2) => void; onOnline: () => void }
+interface Props { settings: Settings; onChange: (p: Partial<Settings>) => void; onBack: () => void; onStart: (players: 1 | 2) => void }
 
-export default function HockeySetup({ settings, onChange, onBack, onStart, onOnline }: Props) {
+export default function HockeySetup({ settings, onChange, onBack, onStart }: Props) {
   const lv: { id: Settings['aiLevel']; label: string }[] = [{ id: 'easy', label: 'Fácil' }, { id: 'hard', label: 'Difícil' }, { id: 'impossible', label: 'Imposible' }];
   return (
     <main className="page scroll">
@@ -17,7 +17,7 @@ export default function HockeySetup({ settings, onChange, onBack, onStart, onOnl
           <button className="btn cyan" onClick={() => { sfx.unlock(); sfx.click(); onStart(1); }}>1 jugador<small>contra la CPU</small></button>
           <button className="btn pink" onClick={() => { sfx.unlock(); sfx.click(); onStart(2); }}>2 jugadores<small>misma pantalla</small></button>
         </div>
-        <button className="btn amber" onClick={() => { sfx.unlock(); sfx.click(); onOnline(); }}>Online con un amigo<small>crea una sala o entra con un código</small></button>
+        <p className="small">¿Online con un amigo? Usa <b>Jugar Online</b> en el menú principal.</p>
       </section>
       <section className="panel">
         <h3>Dificultad de la CPU</h3>

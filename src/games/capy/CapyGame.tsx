@@ -40,12 +40,19 @@ const JELLY_W = 36, JELLY_H = 27;
 const STALK = { x0: 10, x1: 23 };
 const JELLY_BOX: Box = { x0: 4, y0: 2, x1: 32, y1: 22 };
 
-// Semilla pseudoaleatoria sincronizada para carreras multijugador idénticas
-let seedVal = 7;
-export const setCapySeed = (s: number) => { seedVal = (Math.abs(s) % 2147483646) + 1; };
-const rnd = () => ((seedVal = (seedVal * 16807) % 2147483647) / 2147483647);
+// Carrera idéntica en los dos dispositivos: cada obstáculo sale de (semilla, número de obstáculo), sin consumir
+// una secuencia compartida. Así los efectos visuales (burbujas, nubes, partículas) usan Math.random() sin
+// descuadrar jamás el recorrido del rival.
+const vr = Math.random;
+function hash01(seed: number, idx: number, k: number) {
+  let t = (seed + Math.imul(idx + 1, 0x9e3779b1) + Math.imul(k + 1, 0x85ebca6b)) | 0;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+type Rng = () => number;
 
-function makeCoral(count: number): Obstacle {
+function makeCoral(count: number, rnd: Rng): Obstacle {
   const order: Kind[] = count === 1 ? [rnd() < 0.5 ? 'tall' : 'short'] : count === 2 ? ['short', 'tall'] : ['short', 'tall', 'short'];
   const parts: Part[] = [], boxes: Box[] = [];
   let dx = 0, h = 0;
@@ -57,7 +64,7 @@ function makeCoral(count: number): Obstacle {
   }
   return { kind: 'coral', x: 0, lift: 0, w: dx - 27 + CORAL_W, h, parts, boxes, vx: 0, ph: rnd() * 6 };
 }
-function makeJelly(lane: Lane): Obstacle {
+function makeJelly(lane: Lane, rnd: Rng): Obstacle {
   return { kind: 'jelly', x: 0, lift: LANE_LIFT[lane], w: JELLY_W, h: JELLY_H, parts: [], boxes: [JELLY_BOX], vx: JELLY_EXTRA, lane, ph: rnd() * 6 };
 }
 
@@ -142,10 +149,9 @@ interface Props {
   onChange?: (p: Partial<Settings>) => void;
   onExit: () => void;
   online?: { link: Link };
-  onOnline?: () => void;
 }
 
-export default function CapyGame({ settings, onChange, onExit, online, onOnline }: Props) {
+export default function CapyGame({ settings, onChange, onExit, online }: Props) {
   const isOnline = !!online?.link;
   const link = online?.link;
 
@@ -187,7 +193,7 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
     bubbles: Array.from({ length: 24 }, (_, i) => ({ x: (i * 38) % 900, y: 60 + (i * 12) % 240, r: 1.5 + (i % 4), vy: 0.25 + ((i % 3) * 0.1), ph: i })) as Bubble[],
     pops: [] as Bubble[],
     ground: 0, t: 0, lastShown: -1, lastShownScore: -1, view: { W: 600, H: 240, scale: 1, dpr: 1 },
-    curSeed: 7,
+    curSeed: 7, obsIdx: 0,
   });
 
   const setOverlay = (o: Overlay) => { overlayRef.current = o; setOverlayState(o); };
@@ -195,10 +201,9 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
   const reset = (seed = Math.floor(Math.random() * 1000000) + 1) => {
     const s = g.current;
     s.curSeed = seed;
-    setCapySeed(seed);
     Object.assign(s, {
-      speed: SPEED0, dist: 0, score: 0, depthT: 0, py: 0, vy: 0, duck: false, onGround: true, dead: false, deadT: 0, anim: 0,
-      obs: [], gap: 420, blink: 0, shake: 0, ground: 0, lastShown: -1, lastShownScore: -1, pops: [],
+      speed: SPEED0, dist: 0, score: 0, depthT: 0, py: 0, vy: 0, duck: false, duckKey: false, duckBtn: false, onGround: true, dead: false, deadT: 0, anim: 0,
+      obs: [], obsIdx: 0, gap: 420, blink: 0, shake: 0, ground: 0, lastShown: -1, lastShownScore: -1, pops: [],
     });
     setNewBest(false);
     setBothDead(false);
@@ -209,96 +214,96 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
     setRivalAlert(null);
     rivalRef.current.dead = false;
     rivalRef.current.score = 0;
+    rivalRef.current.py = 0;
+    rivalRef.current.duck = false;
     rivalRef.current.rematch = false;
+    wantsRef.current = { me: false, rival: false };
+    rivalSeen.current = performance.now();
     setHud((h) => ({ ...h, score: 0, blink: false }));
   };
 
+  /** Arranca una carrera (solo local/offline, o la que ordena el anfitrión online). */
   const begin = (seed?: number) => {
     sfx.unlock(); sfx.click(); setShowScores(false);
-    const chosenSeed = seed ?? (Math.floor(Math.random() * 1000000) + 1);
-    reset(chosenSeed);
-
-    if (isOnline && link) {
-      if (link.role === 'host') {
-        link.send({ t: 'start', seed: chosenSeed, color: accent });
-      }
-    }
+    reset(seed ?? (Math.floor(Math.random() * 1000000) + 1));
     setOverlay('play');
   };
 
+  // ---------------------------------------------------------------- online
+  // Protocolo (el anfitrión manda): 'start' {seed, round} abre cada carrera. Cada mensaje 'pos'/'dead' lleva el número
+  // de ronda `r`: lo que llegue de una ronda vieja se descarta y lo que llegue "adelantado" se guarda hasta que
+  // empiece mi ronda. Nadie arranca por su cuenta: así nunca hay dos carreras distintas ni un rival "fantasma" eterno.
+  const roundRef = useRef(0);
+  const wantsRef = useRef({ me: false, rival: false });
+  const rivalSeen = useRef(performance.now());
+  const earlyRef = useRef<{ round: number; dead: number } | null>(null);
+
+  const applyRivalDead = (score: number) => {
+    rivalRef.current.dead = true;
+    rivalRef.current.score = score;
+    setRivalDead(true);
+    setRivalScore(score);
+    setRivalAlert(`¡Rival cayó en ${score} pts!`);
+    fx('power');
+    // si yo ya había caído, termina la carrera para los dos
+    if (g.current.dead) { setBothDead(true); setOverlay('over'); }
+  };
+  const startRound = (seed: number, round: number, color?: string) => {
+    roundRef.current = round;
+    if (color) rivalRef.current.color = color;
+    begin(seed);
+    const e = earlyRef.current; earlyRef.current = null;
+    if (e && e.round === round) applyRivalDead(e.dead);
+  };
+  const hostStart = () => {
+    if (!link || link.role !== 'host') return;
+    const round = roundRef.current + 1;
+    const seed = Math.floor(Math.random() * 1000000) + 1;
+    link.send({ t: 'start', seed, round, color: findCapyColor(settingsRef.current.capyColor).color });
+    startRound(seed, round);
+  };
   const requestRematch = () => {
     sfx.click();
+    if (!link || rematchSent) return;
     setRematchSent(true);
-    if (!link) return;
-    link.send({ t: 'rematch' });
-    if (rivalRef.current.rematch || link.role === 'host') {
-      const nextSeed = Math.floor(Math.random() * 1000000) + 1;
-      if (link.role === 'host') {
-        link.send({ t: 'rematch_go', seed: nextSeed });
-        begin(nextSeed);
-      }
-    }
+    wantsRef.current.me = true;
+    if (link.role === 'host') { if (wantsRef.current.rival) hostStart(); }
+    else link.send({ t: 'rematch', r: roundRef.current });
   };
+  // las funciones se recrean en cada render: el manejador de red siempre llama a la última versión
+  const netFns = useRef({ startRound, applyRivalDead, hostStart });
+  netFns.current = { startRound, applyRivalDead, hostStart };
 
-  // Red multijugador
   useEffect(() => {
     if (!link) return;
-
-    link.onConnect(() => {
-      rivalRef.current.connected = true;
-      if (link.role === 'host') {
-        const seed = Math.floor(Math.random() * 1000000) + 1;
-        link.send({ t: 'hello', seed, color: accent });
-      } else {
-        link.send({ t: 'hello_guest', color: accent });
-      }
-    });
-
+    const color = findCapyColor(settingsRef.current.capyColor).color;
     link.onMessage((m) => {
-      if (m.t === 'hello') {
-        rivalRef.current.color = (m.color as string) || '#ff2bd6';
-        link.send({ t: 'hello_ack', color: accent });
-      } else if (m.t === 'hello_guest' || m.t === 'hello_ack') {
-        rivalRef.current.color = (m.color as string) || '#ff2bd6';
-      } else if (m.t === 'start') {
-        rivalRef.current.color = (m.color as string) || '#ff2bd6';
-        begin(m.seed as number);
-      } else if (m.t === 'color') {
+      rivalSeen.current = performance.now();
+      const round = roundRef.current;
+      if (m.t === 'hello' || m.t === 'color') {
         rivalRef.current.color = (m.color as string) || rivalRef.current.color;
+      } else if (m.t === 'start') {
+        if (link.role === 'guest' && Number(m.round) > round) netFns.current.startRound(Number(m.seed), Number(m.round), m.color as string);
       } else if (m.t === 'pos') {
+        if (m.r !== round) return;
         rivalRef.current.py = m.py as number;
         rivalRef.current.duck = !!m.duck;
         rivalRef.current.score = m.score as number;
         setRivalScore(m.score as number);
       } else if (m.t === 'dead') {
-        rivalRef.current.dead = true;
-        rivalRef.current.score = m.score as number;
-        setRivalDead(true);
-        setRivalScore(m.score as number);
-        setRivalAlert(`¡Rival cayó en ${m.score} pts!`);
-        fx('power');
-        // Si yo ya había muerto, ahora los dos murieron
-        if (g.current.dead) {
-          setBothDead(true);
-          setOverlay('over');
-        }
+        if (m.r === round) netFns.current.applyRivalDead(Number(m.score));
+        else if (Number(m.r) > round) earlyRef.current = { round: Number(m.r), dead: Number(m.score) };
       } else if (m.t === 'rematch') {
-        rivalRef.current.rematch = true;
-        setRivalWantsRematch(true);
-        if (link.role === 'host') {
-          const nextSeed = Math.floor(Math.random() * 1000000) + 1;
-          link.send({ t: 'rematch_go', seed: nextSeed });
-          begin(nextSeed);
-        }
-      } else if (m.t === 'rematch_go') {
-        begin(m.seed as number);
+        rivalRef.current.rematch = true; wantsRef.current.rival = true; setRivalWantsRematch(true);
+        if (link.role === 'host' && wantsRef.current.me) netFns.current.hostStart();
       }
     });
-
     link.onClose(() => {
       rivalRef.current.connected = false;
       setRivalAlert('El rival se ha desconectado.');
+      if (overlayRef.current === 'waiting_rival') { rivalRef.current.dead = true; setRivalDead(true); setBothDead(true); setOverlay('over'); }
     });
+    link.send({ t: 'hello', color });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [link]);
 
@@ -307,7 +312,7 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
 
   const jump = () => {
     const s = g.current;
-    if (overlayRef.current === 'ready') { begin(); return; }
+    if (overlayRef.current === 'ready') { if (!isOnline) begin(); else if (link?.role === 'host') netFns.current.hostStart(); return; }
     if (overlayRef.current !== 'play' || s.dead) return;
     if (s.onGround) { s.vy = JUMP_V; s.onGround = false; s.duck = false; fx('jump', 'bounce'); }
   };
@@ -339,13 +344,17 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
       const lastRight = last ? last.x + last.w : -Infinity;
       const x = W + 30;
       if (x - lastRight < s.gap) return;
+      // La dificultad depende del número de obstáculo (≈ 22 puntos por obstáculo): igual en los dos dispositivos.
+      const idx = s.obsIdx++;
+      let k = 0;
+      const rnd: Rng = () => hash01(s.curSeed, idx, k++);
       let o: Obstacle;
-      if (s.score >= 110 && rnd() < Math.min(0.42, 0.18 + s.score / 4000)) {
+      if (idx >= 5 && rnd() < Math.min(0.42, 0.18 + idx * 0.0066)) {
         const r = rnd();
-        o = makeJelly(r < 0.3 ? 'low' : r < 0.78 ? 'mid' : 'high');
+        o = makeJelly(r < 0.3 ? 'low' : r < 0.78 ? 'mid' : 'high', rnd);
       } else {
-        const r = rnd(), more = Math.min(0.25, s.score / 3000);
-        o = makeCoral(r < 0.5 - more ? 1 : r < 0.82 - more / 2 ? 2 : 3);
+        const r = rnd(), more = Math.min(0.25, idx * 0.0087);
+        o = makeCoral(r < 0.5 - more ? 1 : r < 0.82 - more / 2 ? 2 : 3, rnd);
       }
       o.x = x; s.obs.push(o);
       s.gap = s.speed * 36 * (1 + rnd() * 0.7) + 150 + (o.kind === 'jelly' ? 80 : 0) + o.w * 0.4;
@@ -353,20 +362,20 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
     const hits = (a: Box, b: Box) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
     const respawnBubble = (b: Bubble, fromRight: boolean) => {
       const { W, H } = s.view;
-      b.x = fromRight ? W + 10 + rnd() * 80 : rnd() * W; b.y = H - FLOOR - rnd() * 30; b.r = 1.5 + rnd() * 3.5; b.vy = 0.25 + rnd() * 0.5;
+      b.x = fromRight ? W + 10 + vr() * 80 : vr() * W; b.y = H - FLOOR - vr() * 30; b.r = 1.5 + vr() * 3.5; b.vy = 0.25 + vr() * 0.5;
     };
 
     const die = () => {
       if (s.dead) return;
       s.dead = true; s.deadT = 0; s.shake = 10; fx('hit', 'lose');
       const feet = s.view.H - FLOOR - s.py;
-      for (let i = 0; i < 16; i++) s.pops.push({ x: OX + 0.13 * S + (rnd() - 0.5) * 30, y: feet - 0.4 * S + (rnd() - 0.5) * 24, r: 1.5 + rnd() * 3, vy: 0.4 + rnd() * 0.9, ph: rnd() * 6, life: 0, max: 40 + rnd() * 30 });
+      for (let i = 0; i < 16; i++) s.pops.push({ x: OX + 0.13 * S + (vr() - 0.5) * 30, y: feet - 0.4 * S + (vr() - 0.5) * 24, r: 1.5 + vr() * 3, vy: 0.4 + vr() * 0.9, ph: vr() * 6, life: 0, max: 40 + vr() * 30 });
       const final = Math.floor(s.score);
       if (final > s.best) { s.best = final; save('capyHi', final); setNewBest(true); setHud((h) => ({ ...h, best: final })); }
       if (final > 0) setScores(addScore('capy', { score: final }));
 
       if (isOnline && link) {
-        link.send({ t: 'dead', score: final });
+        link.send({ t: 'dead', r: roundRef.current, score: final });
         if (rivalRef.current.dead) {
           // Ambos han muerto
           setBothDead(true);
@@ -383,14 +392,14 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
       const playing = overlayRef.current === 'play' || overlayRef.current === 'waiting_rival';
       const { W, H } = s.view;
       const moving = (overlayRef.current === 'play') && !s.dead;
-      s.clouds.forEach((c) => { c.x -= 0.15 + (moving ? s.speed * 0.05 : 0); if (c.x < -80) { c.x = W + 40 + rnd() * 120; c.y = 6 + rnd() * 22; } });
+      s.clouds.forEach((c) => { c.x -= 0.15 + (moving ? s.speed * 0.05 : 0); if (c.x < -80) { c.x = W + 40 + vr() * 120; c.y = 6 + vr() * 22; } });
       s.bubbles.forEach((b) => { b.y -= b.vy; b.x -= 0.1 + (moving ? s.speed * 0.3 : 0) + Math.sin(s.t * 2 + b.ph) * 0.15; if (b.y < H * 0.17 + 6 || b.x < -12) respawnBubble(b, b.x < -12); });
       s.pops = s.pops.filter((b) => { b.life = (b.life ?? 0) + 1; b.y -= b.vy; b.x += Math.sin(s.t * 6 + b.ph) * 0.3 - (moving ? s.speed * 0.5 : 0.1); return b.life < (b.max ?? 40); });
       s.depth += (s.depthT - s.depth) * 0.01;
 
       // Envío de posición multijugador online a 20 Hz
-      if (isOnline && link && s.anim % 3 === 0 && !s.dead) {
-        link.send({ t: 'pos', py: Math.round(s.py), duck: s.duck, score: Math.floor(s.score), dead: s.dead });
+      if (isOnline && link && overlayRef.current === 'play' && s.anim % 3 === 0 && !s.dead) {
+        link.send({ t: 'pos', r: roundRef.current, py: Math.round(s.py), duck: s.duck, score: Math.floor(s.score) });
       }
 
       if (s.dead) {
@@ -399,6 +408,11 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
         if (s.shake > 0) s.shake--;
         // Quien ya cayó sigue avanzando el escenario para poder ver la carrera del rival.
         if (overlayRef.current === 'waiting_rival') {
+          // Si el rival lleva 8 s sin dar señales (se fue, se cortó la red), no se queda uno mirando en blanco y negro.
+          if (performance.now() - rivalSeen.current > 8000) {
+            rivalRef.current.dead = true; setRivalDead(true); setRivalAlert('Se perdió la señal del rival.');
+            setBothDead(true); setOverlay('over');
+          }
           s.speed = Math.min(SPEED_MAX, s.speed + ACCEL);
           s.score += s.speed * 0.05;
           s.ground = (s.ground + s.speed) % 2400;
@@ -419,7 +433,7 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
       const hundred = Math.floor(s.score / 100);
       if (hundred > 0 && hundred !== s.lastShown) { if (s.lastShown >= 0) { fx('power'); s.blink = 45; } s.lastShown = hundred; }
       if (s.blink > 0) s.blink--;
-      if (s.anim % 14 === 0) s.pops.push({ x: OX + 0.45 * S, y: H - FLOOR - s.py - 0.55 * S, r: 1.5 + rnd() * 2, vy: 0.5 + rnd() * 0.4, ph: rnd() * 6, life: 0, max: 50 });
+      if (s.anim % 14 === 0) s.pops.push({ x: OX + 0.45 * S, y: H - FLOOR - s.py - 0.55 * S, r: 1.5 + vr() * 2, vy: 0.5 + vr() * 0.4, ph: vr() * 6, life: 0, max: 50 });
 
       s.duck = (s.duckKey || s.duckBtn);
       if (!s.onGround) {
@@ -631,9 +645,6 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
           )}
         </div>
         <button className="ibtn" onClick={() => { sfx.click(); pause(); setShowSkins(true); }} aria-label="Cambiar Skin" title="Skins">🎨</button>
-        {!isOnline && onOnline && (
-          <button className="ibtn" onClick={() => { sfx.click(); onOnline(); }} aria-label="Jugar Online" title="Jugar Online">🌐</button>
-        )}
         {!isOnline && (
           <button className="ibtn" onClick={() => { sfx.click(); pause(); setShowScores(true); }} aria-label="Historial de partidas">🏆</button>
         )}
@@ -660,9 +671,6 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
                 <li><i>⌨</i> Teclado: [Espacio]/[↑] salta · [↓] agacha</li>
               </ul>
               <button className="btn cyan cy-btn-main" onClick={() => begin()}>¡A nadar! 🍊</button>
-              {onOnline && (
-                <button className="btn pink" onClick={() => { sfx.click(); onOnline(); }}>🌐 Jugar con un amigo</button>
-              )}
             </div>
           </div>
         )}
@@ -673,8 +681,10 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
               <span className="cy-badge">🌐 MULTIJUGADOR ONLINE 🫧</span>
               <h2 className="ov-title cyan">¡Duelo Capy!</h2>
               <p className="ov-text">Verás a tu rival como un <b>fantasma 👻</b> detrás de ti en vivo. ¡Gana el último en pie!</p>
-              <button className="btn cyan cy-btn-main" onClick={() => begin()}>¡Empezar carrera! 🐾</button>
-              <button className="btn ghost" onClick={onExit}>✕ Salir</button>
+              {link?.role === 'host'
+                ? <button className="btn cyan cy-btn-main" onClick={() => { sfx.unlock(); hostStart(); }}>¡Empezar carrera! 🐾</button>
+                : <p className="cy-waiting">Esperando a que el anfitrión empiece la carrera…</p>}
+              <button className="btn ghost" onClick={onExit}>✕ Salir de la partida</button>
             </div>
           </div>
         )}
@@ -725,7 +735,7 @@ export default function CapyGame({ settings, onChange, onExit, online, onOnline 
                     : '¡Llegaron a la misma distancia exacta!'}
                 </p>
                 {rematchSent ? (
-                  <p className="cy-waiting">Esperando que el rival acepte revancha...</p>
+                  <p className="cy-waiting">{link?.role === 'host' ? 'Esperando que el rival acepte la revancha…' : 'Esperando al anfitrión…'}</p>
                 ) : (
                   <button className="btn cyan cy-btn-main" onClick={requestRematch}>
                     ↻ Revancha {rivalWantsRematch && '⭐ ¡Rival listo!'} 🐾
