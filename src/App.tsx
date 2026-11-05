@@ -10,7 +10,7 @@ import CapyGame from './games/capy/CapyGame.tsx';
 import RouletteGame from './games/roulette/RouletteGame.tsx';
 import Online from './ui/Online.tsx';
 import OnlineHub from './ui/OnlineHub.tsx';
-import { Session, newGid } from './net/session.ts';
+import { Session, newGid, slotName, supportsPlayers } from './net/session.ts';
 import type { HubGame } from './net/session.ts';
 import type { Link } from './net/link.ts';
 import { loadSettings, saveSettings, sload, ssave } from './core/storage.ts';
@@ -69,20 +69,32 @@ export default function App() {
       const cur = screenRef.current;
       if (m.t === 'hub:play' && !session.isHost) {
         if (cur.name === 'online-game') session.closeGame();
-        const link = session.openGame(String(m.gid));
+        // `order`: quiénes juegan (puestos de la sala); tu posición ahí es tu número de jugador
+        const order = Array.isArray(m.order) ? (m.order as number[]) : [0, 1];
+        const link = session.openGame(String(m.gid), order);
         setScreen({ name: 'online-game', session, game: m.game as HubGame, link });
       } else if (m.t === 'hub:back') {
-        if (cur.name === 'online-game' && cur.session === session) { session.closeGame(); setScreen({ name: 'hub', session }); toast('Tu amigo salió del juego.'); }
-      } else if (m.t === 'hub:bye') dropSession(session, 'Tu amigo salió de la sala.');
+        if (cur.name === 'online-game' && cur.session === session) { session.closeGame(); setScreen({ name: 'hub', session }); toast('Alguien salió del juego: volvieron a la sala.'); }
+      } else if (m.t === 'hub:left' && session.isHost) {
+        // (anfitrión) un invitado se fue: si estaba jugando, la partida se cancela y todos vuelven a la sala
+        const who = slotName(Number(m.slot));
+        if (m.inGame && cur.name === 'online-game' && cur.session === session) {
+          session.closeGame(); session.sendHub('back'); setScreen({ name: 'hub', session });
+          toast(`${who} salió de la sala. La partida se canceló.`);
+        } else toast(`${who} salió de la sala.`);
+      } else if (m.t === 'hub:bye') dropSession(session, 'El anfitrión cerró la sala.');
+      else if (m.t === 'hub:reject') dropSession(session, m.why === 'full' ? 'La sala está llena (máximo 4 jugadores).' : 'Ya hay una partida en curso. Inténtalo de nuevo cuando termine.');
     });
-    session.onClose(() => dropSession(session, 'Se perdió la conexión con tu amigo.'));
+    session.onClose(() => dropSession(session, 'Se perdió la conexión con el anfitrión.'));
     setScreen({ name: 'hub', session });
   };
   const pickGame = (session: Session, game: HubGame) => {
     if (!session.isHost) return;
+    const order = session.slots();
+    if (!supportsPlayers(game, order.length)) { toast('Ese juego no admite este número de jugadores.'); return; }
     const gid = newGid();
-    const link = session.openGame(gid);
-    session.sendHub('play', { game, gid });
+    const link = session.openGame(gid, order);
+    session.sendHub('play', { game, gid, order });
     setScreen({ name: 'online-game', session, game, link });
   };
   const leaveGame = (s: { session: Session; link: Link }) => {

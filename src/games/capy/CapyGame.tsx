@@ -307,6 +307,21 @@ export default function CapyGame({ settings, onChange, onExit, online }: Props) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [link]);
 
+  // ranking de la sala: cuando terminan los dos, el anfitrión anota al que llegó más lejos (empate: nadie)
+  useEffect(() => {
+    if (!bothDead || !link || link.role !== 'host') return;
+    if (hud.score === rivalScore) return;
+    link.reportWin?.([hud.score > rivalScore ? 0 : 1], 'capy:' + roundRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bothDead]);
+
+  // Móvil: pide pantalla horizontal si el navegador lo permite (si no, capy.css gira el juego en vertical).
+  useEffect(() => {
+    const o = (screen as unknown as { orientation?: { lock?: (t: string) => Promise<void>; unlock?: () => void } }).orientation;
+    try { o?.lock?.('landscape')?.catch(() => { /* no permitido fuera de pantalla completa: se usa el giro por CSS */ }); } catch { /* sin API */ }
+    return () => { try { o?.unlock?.(); } catch { /* ok */ } };
+  }, []);
+
   const pause = () => { if (!isOnline && overlayRef.current === 'play') setOverlay('pause'); };
   const resume = () => { sfx.unlock(); setOverlay('play'); };
 

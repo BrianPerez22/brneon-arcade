@@ -16,12 +16,27 @@ export interface Link {
   onMessage(cb: (m: Msg) => void): void;
   onClose(cb: (reason: string) => void): void;
   close(): void;
+  /** Solo dentro de una sala online: posición de este jugador en la partida (0 = anfitrión). */
+  index?: number;
+  /** Solo dentro de una sala online: cuántos jugadores participan en esta partida (2 a 4). */
+  players?: number;
+  /** Solo el anfitrión: anota victorias en el ranking de la sala. `key` evita contar dos veces el mismo resultado. */
+  reportWin?(winners: number[], key: string): void;
+}
+
+/** Sala creada por el anfitrión: puede recibir varios invitados (cada uno es un Link 1 a 1 con el anfitrión). */
+export interface HostRoom {
+  code: string;
+  backendId: string;
+  /** Se llama una vez por cada invitado que se conecta (si ya había alguien esperando, se le avisa enseguida). */
+  onGuest(cb: (link: Link) => void): void;
+  close(): void;
 }
 
 export interface Backend {
   id: string;
   label: string;
-  createRoom(): Promise<Link>;
+  createRoom(): Promise<HostRoom>;
   joinRoom(code: string): Promise<Link>;
 }
 

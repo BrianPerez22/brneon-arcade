@@ -10,7 +10,7 @@ interface Props {
   settings: Settings;
   onChange: (p: Partial<Settings>) => void;
   onExit: () => void;
-  online?: { link: Link };   // 1 contra 1 online: el anfitrión guarda la bala en secreto y decide cada disparo
+  online?: { link: Link };   // online (2 a 4 jugadores): el anfitrión guarda la bala en secreto y decide cada disparo
 }
 
 const PLAYER_COLORS = ['#19f4ff', '#ff2bd6', '#ffb800', '#b6ff2e', '#9b7bff', '#ff5d8f', '#38ff9c', '#ff7a36'];
@@ -18,13 +18,17 @@ const PLAYER_COLORS = ['#19f4ff', '#ff2bd6', '#ffb800', '#b6ff2e', '#9b7bff', '#
 export default function RouletteGame({ settings, onChange, onExit, online }: Props) {
   const link = online?.link;
   const isOnline = !!link;
-  const me: 0 | 1 = link && link.role === 'guest' ? 1 : 0;
+  const isGuest = !!link && link.role === 'guest';
+  const me = link ? (link.index ?? (isGuest ? 1 : 0)) : 0;      // tu número de jugador (0 = anfitrión)
   // Configuración de jugadores
-  const [players, setPlayers] = useState<string[]>(isOnline ? ['Anfitrión', 'Invitado'] : ['Jugador 1', 'Jugador 2']);
+  const [players, setPlayers] = useState<string[]>(() => isOnline
+    ? Array.from({ length: link!.players ?? 2 }, (_, i) => (i === 0 ? 'Anfitrión' : `Jugador ${i + 1}`))
+    : ['Jugador 1', 'Jugador 2']);
   const [lost, setLost] = useState(false);
   const [rematchSent, setRematchSent] = useState(false);
   const [rivalWants, setRivalWants] = useState(false);
   const wants = useRef({ me: false, rival: false });
+  const againFrom = useRef(new Set<number>());       // anfitrión: quiénes ya pidieron otra ronda
   const secret = useRef(0);                       // solo el anfitrión (u offline) conoce la recámara con agua
   const turnRef = useRef(0); const chamberRef = useRef(0); const phaseRef = useRef<string>('setup');
   const [turnIndex, setTurnIndex] = useState(0);
@@ -58,7 +62,7 @@ export default function RouletteGame({ settings, onChange, onExit, online }: Pro
     // online: lo que se ve girar es un señuelo, nadie puede deducir en qué disparo sale el agua
     setBulletChamber(isOnline ? Math.floor(Math.random() * 6) : secret.current);
     setChamber(0); setTurn(0); setSplashResult(null);
-    wants.current = { me: false, rival: false }; setRematchSent(false); setRivalWants(false);
+    wants.current = { me: false, rival: false }; againFrom.current = new Set(); setRematchSent(false); setRivalWants(false);
 
     animRef.current.spinAng = 0;
     animRef.current.spinSpeed = 0.45;
@@ -72,7 +76,7 @@ export default function RouletteGame({ settings, onChange, onExit, online }: Pro
   };
   // Iniciar una nueva ronda con bala de agua cargada al azar (offline y anfitrión)
   const startRound = () => {
-    if (isOnline && me === 1) return;
+    if (isOnline && isGuest) return;
     const bullet = Math.floor(Math.random() * 6);
     if (link) link.send({ t: 'start' });
     loadRound(bullet);
@@ -81,8 +85,12 @@ export default function RouletteGame({ settings, onChange, onExit, online }: Pro
     sfx.click();
     if (!link || wants.current.me) return;
     wants.current.me = true; setRematchSent(true);
-    if (me === 1) link.send({ t: 'again' });
-    else if (wants.current.rival) startRound();
+    if (isGuest) link.send({ t: 'again' });
+    else if (againFrom.current.size >= players.length - 1) startRound();
+  };
+  /** (anfitrión) ranking de la sala: si le tocó el agua a `shooter`, ganan todos los demás. */
+  const reportHit = (shooter: number) => {
+    link?.reportWin?.(players.map((_, i) => i).filter((i) => i !== shooter), 'rl:' + Date.now());
   };
 
   /** Animación y resultado de un disparo (mismo código en los dos dispositivos). */
@@ -131,9 +139,10 @@ export default function RouletteGame({ settings, onChange, onExit, online }: Pro
     const chamberNo = chamberRef.current + 1, shooter = turnRef.current;
     if (!isOnline) { playShot(chamberRef.current === secret.current, shooter, chamberNo); return; }
     if (shooter !== me) return;                       // online: solo dispara a quien le toca
-    if (me === 0) {
+    if (!isGuest) {
       const hit = chamberRef.current === secret.current;
       link!.send({ t: 'shot', hit, shooter, n: chamberNo });
+      if (hit) reportHit(shooter);
       playShot(hit, shooter, chamberNo);
     } else {
       link!.send({ t: 'pull' });                        // el invitado pide el disparo; el anfitrión decide
@@ -145,17 +154,19 @@ export default function RouletteGame({ settings, onChange, onExit, online }: Pro
   useEffect(() => {
     if (!link) return;
     link.onMessage((m) => {
-      if (m.t === 'start' && me === 1) loadRound(null);
-      else if (m.t === 'pull' && me === 0) {
-        if (phaseRef.current !== 'turn' || turnRef.current !== 1) return;
+      if (m.t === 'start' && isGuest) loadRound(null);
+      else if (m.t === 'pull' && !isGuest) {
+        const from = Number(m.__from);                  // quién pide el disparo (lo pone la sala)
+        if (phaseRef.current !== 'turn' || turnRef.current !== from) return;
         const hit = chamberRef.current === secret.current, n = chamberRef.current + 1;
-        link.send({ t: 'shot', hit, shooter: 1, n });
-        playShot(hit, 1, n);
-      } else if (m.t === 'shot' && me === 1) {
+        link.send({ t: 'shot', hit, shooter: from, n });
+        if (hit) reportHit(from);
+        playShot(hit, from, n);
+      } else if (m.t === 'shot' && isGuest) {
         playShot(!!m.hit, Number(m.shooter), Number(m.n));
-      } else if (m.t === 'again' && me === 0) {
-        wants.current.rival = true; setRivalWants(true);
-        if (wants.current.me) startRound();
+      } else if (m.t === 'again' && !isGuest) {
+        againFrom.current.add(Number(m.__from)); wants.current.rival = true; setRivalWants(true);
+        if (wants.current.me && againFrom.current.size >= players.length - 1) startRound();
       }
     });
     link.onClose(() => setLost(true));
@@ -371,8 +382,8 @@ export default function RouletteGame({ settings, onChange, onExit, online }: Pro
             </p>
             {isOnline ? (
               rematchSent
-                ? <p className="waiting">{me === 1 ? 'Esperando al anfitrión' : 'Esperando a tu rival'}<i>.</i><i>.</i><i>.</i></p>
-                : <button className="btn cyan cy-btn-main" onClick={requestAgain}>↻ Nueva Ronda 🔫{rivalWants ? ' ⭐ ¡tu rival quiere!' : ''}</button>
+                ? <p className="waiting">{isGuest ? 'Esperando al anfitrión' : 'Esperando a los demás'}<i>.</i><i>.</i><i>.</i></p>
+                : <button className="btn cyan cy-btn-main" onClick={requestAgain}>↻ Nueva Ronda 🔫{rivalWants ? ' ⭐ ¡ya hay quien quiere!' : ''}</button>
             ) : (
               <>
                 <button className="btn cyan cy-btn-main" onClick={startRound}>↻ Nueva Ronda 🔫</button>
@@ -391,8 +402,8 @@ export default function RouletteGame({ settings, onChange, onExit, online }: Pro
         <main className="page scroll">
           <section className="panel">
             <h2 className="ov-title cyan" style={{ textAlign: 'center' }}>Ruleta Colombiana 🔫💦</h2>
-            <p>Duelo online 1 contra 1. El tambor tiene 6 recámaras y <b>una sola bala de agua</b> escondida: se turnan para apretar el gatillo hasta que a alguien le toque el chorro.</p>
-            {me === 0
+            <p>Partida online de {players.length} jugadores. El tambor tiene 6 recámaras y <b>una sola bala de agua</b> escondida: se turnan para apretar el gatillo hasta que a alguien le toque el chorro. ¡Quien se salva, gana!</p>
+            {!isGuest
               ? <button className="btn cyan big" onClick={startRound}>¡Cargar y Jugar! 🔫</button>
               : <p className="waiting">Esperando a que el anfitrión cargue el tambor<i>.</i><i>.</i><i>.</i></p>}
           </section>
@@ -468,7 +479,7 @@ export default function RouletteGame({ settings, onChange, onExit, online }: Pro
       {lost && (
         <div className="red-splash-screen">
           <div className="red-splash-card">
-            <h1 className="red-title">Rival desconectado</h1>
+            <h1 className="red-title">Jugador desconectado</h1>
             <p className="ov-text" style={{ color: '#fff' }}>La conexión se cerró.</p>
             <button className="btn cyan" onClick={onExit}>Salir</button>
           </div>

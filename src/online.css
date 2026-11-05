@@ -49,7 +49,22 @@ input, textarea { -webkit-user-select: text; user-select: text; font-size: 18px;
 .hub-dots i.on { background: #38ff9c; box-shadow: 0 0 12px #38ff9c; }
 .hub-games { display: grid; gap: 12px; }
 .hub-games.locked .hub-card { opacity: .55; cursor: default; }
-.hub-card { grid-template-columns: 1fr auto; text-align: left; }
+/* tarjetas de juego del hub: mismo look que las del menú (antes no tenían estilo y salían blancas) */
+.hub-card, .hub-card:disabled { display: grid; grid-template-columns: 1fr auto; text-align: left; width: 100%; color: var(--text); background: var(--panel); }
+.hub-card:disabled { cursor: default; }
+.hub-card:disabled:active { transform: none; box-shadow: 0 0 0 2px #07060f, 4px 4px 0 #000, 4px 4px 0 2px var(--c); }
+.hub-invite .btn { min-height: 44px; padding: 10px 8px; }
+.hub-dots i { transition: background .2s, box-shadow .2s; }
+
+/* ===== Ranking de la sala ===== */
+.board-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.board-list li { display: grid; grid-template-columns: 28px 12px 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; background: var(--panel2); border: 2px solid var(--line); border-radius: 4px; box-shadow: 2px 2px 0 #000; }
+.board-list li.lead { border-color: var(--pc); box-shadow: 2px 2px 0 #000, 0 0 14px -4px var(--pc); }
+.board-pos { font: 11px var(--px); color: var(--mute); text-align: center; }
+.board-dot { width: 12px; height: 12px; border-radius: 3px; background: var(--pc); box-shadow: 0 0 8px var(--pc); }
+.board-name { font-size: 14px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-wins { font: 15px var(--px); color: var(--pc); display: grid; justify-items: end; gap: 4px; }
+.board-wins small { font: 500 10px var(--body); color: var(--mute); }
 
 .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 50; max-width: min(92vw, 420px); padding: 12px 16px; text-align: center;
   font: 10px/1.5 var(--px); color: #fff; background: #2a0f3d; border: 2px solid var(--pink); border-radius: 6px; box-shadow: 3px 3px 0 #000; animation: slideUp .3s ease-out; }

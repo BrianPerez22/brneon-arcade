@@ -359,3 +359,27 @@
 @keyframes cy-blink {
   50% { opacity: 0.3; }
 }
+
+/* ===== Celular en vertical: Capy Run siempre se ve en horizontal =====
+   Si el navegador no deja bloquear la orientación, se gira el juego 90° para que ocupe la pantalla como en apaisado
+   (basta con girar el celular hacia la izquierda). Los toques y los botones siguen funcionando igual. */
+@media (pointer: coarse) and (orientation: portrait) and (max-width: 640px) {
+  .game.cy {
+    inset: auto; top: 0; left: 0;
+    width: 100vh; width: 100dvh;           /* el alto de la pantalla pasa a ser el ancho del juego */
+    height: 100vw; height: 100dvw;
+    transform-origin: top left;
+    transform: translateX(100vw) rotate(90deg);
+    /* las zonas seguras (notch, barra de gestos) también giran: arriba→izquierda, derecha→arriba, abajo→derecha, izquierda→abajo */
+    padding: var(--sar) var(--sab) var(--sal) var(--sat);
+  }
+  /* HUD compacto, igual que en un celular apaisado (la media query de alto no se activa porque la ventana sigue siendo vertical) */
+  .game.cy .gbar { padding: 4px 8px; }
+  .game.cy .ibtn { width: 38px; height: 38px; }
+  .game.cy .stat b { font-size: 11px; }
+  .game.cy .ov { gap: 8px; padding: 10px; }
+  .game.cy .ov-text { font-size: 13px; }
+  .game.cy .legend { font-size: 12px; gap: 4px; }
+  .game.cy .cy-ctl { padding: 4px 10px calc(var(--sal) + 4px); }
+  .game.cy .cy-pad-btn { min-height: 42px; }
+}

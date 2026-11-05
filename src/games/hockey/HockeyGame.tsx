@@ -109,7 +109,11 @@ export default function HockeyGame({ settings, onChange = () => {}, onExit, conf
         setScore([s.score[0], s.score[1]]);
       } else if (e.t === 'count') { sfx.beep(); banner.current = { text: String(e.n), life: 40 }; }
       else if (e.t === 'go') { sfx.beep(true); banner.current = { text: '¡YA!', life: 40 }; }
-      else if (e.t === 'over') { sfx.win(); setWinner(e.winner); setTimeout(() => setOverlay('over'), 900); }
+      else if (e.t === 'over') {
+        sfx.win(); setWinner(e.winner); setTimeout(() => setOverlay('over'), 900);
+        // ranking de la sala: solo el anfitrión (que simula la física) anota la victoria
+        if (online && !isGuest) link!.reportWin?.([e.winner], 'hk:' + Date.now());
+      }
     }
   };
 

@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { BACKENDS, explainError } from '../net/backends.ts';
 import { CODE_LEN, normalizeCode } from '../net/link.ts';
-import type { Link } from '../net/link.ts';
-import { Session } from '../net/session.ts';
+import type { HostRoom, Link } from '../net/link.ts';
+import { Session, MAX_PLAYERS } from '../net/session.ts';
+import { copyText, inviteUrl, shareInvite } from '../net/invite.ts';
 import { sfx } from '../core/audio.ts';
 
 interface Props {
@@ -12,14 +13,6 @@ interface Props {
   initialLocal?: boolean;         // enlace con &modo=local (pruebas)
   onBack: () => void;
   onConnected: (session: Session) => void;
-}
-
-async function copyText(t: string) {
-  try { await navigator.clipboard.writeText(t); return true; } catch { /* http en red local: no hay clipboard */ }
-  try {
-    const ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove(); return ok;
-  } catch { return false; }
 }
 
 export default function Online({ initialCode, initialLocal, onBack, onConnected }: Props) {
@@ -30,27 +23,28 @@ export default function Online({ initialCode, initialLocal, onBack, onConnected 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState('');
-  const linkRef = useRef<Link | null>(null);
+  const linkRef = useRef<Link | null>(null);       // invitado: conexión con el anfitrión
+  const roomRef = useRef<HostRoom | null>(null);   // anfitrión: la sala (acepta hasta 4 jugadores)
   const handedOff = useRef(false);
   const autoJoined = useRef(false);
 
   // al salir del lobby sin haber conectado, se cierra la sala
-  useEffect(() => () => { if (!handedOff.current) linkRef.current?.close(); }, []);
+  useEffect(() => () => { if (!handedOff.current) { roomRef.current?.close(); linkRef.current?.close(); } }, []);
 
-  const handOff = (link: Link) => {
+  const handOff = (link: Link, room?: HostRoom) => {
     if (handedOff.current) return;
     handedOff.current = true; sfx.beep(true);
-    onConnected(new Session(link));
+    onConnected(new Session(link, room));
   };
 
   const create = async () => {
     sfx.unlock(); sfx.click();
     setError(''); setBusy(true); setView('host');
     try {
-      const link = await BACKENDS[backendId].createRoom();
-      linkRef.current = link; setCode(link.code);
-      link.onConnect(() => handOff(link));
-      link.onClose(() => { if (!handedOff.current) setError('Se cerró la sala.'); });
+      const room = await BACKENDS[backendId].createRoom();
+      roomRef.current = room; setCode(room.code);
+      // el primer jugador que entra lleva a todos al hub; los demás pueden entrar ya dentro de la sala
+      room.onGuest((link) => handOff(link, room));
     } catch (e) { setError(explainError(e)); setView('choose'); }
     setBusy(false);
   };
@@ -74,24 +68,23 @@ export default function Online({ initialCode, initialLocal, onBack, onConnected 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const cancelHost = () => { linkRef.current?.close(); linkRef.current = null; setCode(''); setView('choose'); setError(''); };
+  const cancelHost = () => { roomRef.current?.close(); roomRef.current = null; setCode(''); setView('choose'); setError(''); };
   const goBack = () => {
     sfx.click();
     if (view === 'host') cancelHost();
     else if (view === 'join') { setView('choose'); setError(''); }
     else onBack();
   };
-  const inviteUrl = () => `${location.origin}${location.pathname}?sala=${code}${backendId === 'local' ? '&modo=local' : ''}`;
   const doCopy = async (what: 'code' | 'link') => {
     sfx.click();
-    const ok = await copyText(what === 'code' ? code : inviteUrl());
+    const ok = await copyText(what === 'code' ? code : inviteUrl(code, backendId === 'local'));
     setCopied(ok ? what : 'fail'); setTimeout(() => setCopied(''), 1800);
   };
   const share = async () => {
     sfx.click();
-    const data = { title: 'BrNeon Arcade', text: `Juguemos en BrNeon Arcade. Código de sala: ${code}`, url: inviteUrl() };
-    if (navigator.share) { try { await navigator.share(data); return; } catch { return; } }
-    void doCopy('link');
+    const r = await shareInvite(code, backendId === 'local');
+    if (r === 'copied') { setCopied('link'); setTimeout(() => setCopied(''), 1800); }
+    else if (r === 'fail') { setCopied('fail'); setTimeout(() => setCopied(''), 1800); }
   };
 
   return (
@@ -105,7 +98,7 @@ export default function Online({ initialCode, initialLocal, onBack, onConnected 
         <>
           <section className="panel">
             <h3>Juega con un amigo</h3>
-            <p>Una sola sala para todos los juegos: <b>quien la crea elige a qué jugar</b> (Air Hockey, Capy Run, Suerte 2048 o Ruleta Colombiana) y el otro entra solo. No hace falta cuenta.</p>
+            <p>Una sola sala para todos los juegos, de <b>2 a {MAX_PLAYERS} jugadores</b>: quien la crea elige a qué jugar (Air Hockey y Capy Run son 1 contra 1; Suerte 2048 y Ruleta Colombiana admiten hasta {MAX_PLAYERS}) y los demás entran solos. No hace falta cuenta.</p>
             <div className="row">
               <button className="btn cyan" disabled={busy} onClick={create}>Crear sala<small>tú eliges el juego</small></button>
               <button className="btn pink" onClick={() => { sfx.click(); setView('join'); setError(''); }}>Unirme a un amigo<small>con su código</small></button>
@@ -132,7 +125,7 @@ export default function Online({ initialCode, initialLocal, onBack, onConnected 
               </div>
               {copied === 'fail' && <p className="err">No se pudo copiar solo. Dile el código en voz alta o por chat.</p>}
               <p className="waiting">Esperando a tu amigo<i>.</i><i>.</i><i>.</i></p>
-              <p className="small">Tu amigo entra a la web, pulsa Jugar online → Unirme a un amigo, o abre el enlace compartido.</p>
+              <p className="small">Tus amigos entran a la web, pulsan Jugar online → Unirme a un amigo, o abren el enlace compartido. Pueden entrar hasta {MAX_PLAYERS} jugadores en total.</p>
             </>
           ) : <p className="waiting">Creando sala<i>.</i><i>.</i><i>.</i></p>}
         </section>
